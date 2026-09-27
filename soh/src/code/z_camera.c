@@ -43,6 +43,7 @@ s32 Camera_UpdateWater(Camera* camera);
 // ShipCrew's independent local P2 camera only runs the stock camera solver,
 // not a second gameplay/cutscene pass or a duplicate copy of HUD settings.
 Player* ShipCrewCamera_GetNativeSecondPlayer(PlayState* play);
+Actor* ShipCrewCamera_GetSecondTarget(PlayState* play);
 void ShipCrewCamera_SetNativeSecondView(PlayState* play, const Vec3f* eye, const Vec3f* at, const Vec3f* up, f32 fov);
 static s32 sShipCrewUpdatingNativeSecondCamera = false;
 
@@ -7851,6 +7852,22 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
         sOOBTimer = 0;
         p2Play = play;
         p2Player = player;
+    }
+
+    // Use the original per-camera target/battle solver, never P1's global lock.
+    // Only request mode on transitions so the solver's camera animation state
+    // is not restarted on every frame.
+    {
+        Actor* target = ShipCrewCamera_GetSecondTarget(play);
+        if (target != NULL) {
+            if (p2Camera.target != target || p2Camera.mode != CAM_MODE_BATTLE) {
+                p2Camera.target = target;
+                Camera_RequestModeImpl(&p2Camera, CAM_MODE_BATTLE, true);
+            }
+        } else if (p2Camera.target != NULL) {
+            p2Camera.target = NULL;
+            Camera_RequestModeImpl(&p2Camera, CAM_MODE_NORMAL, true);
+        }
     }
 
     // Reuse ordinary camera settings when P1 moves between 3D room types.
