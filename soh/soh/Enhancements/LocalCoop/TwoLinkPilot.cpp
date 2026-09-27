@@ -52,12 +52,6 @@ constexpr f32 kWallCheckHeight = 50.0f;
 constexpr f32 kWallCheckRadius = 22.0f;
 constexpr f32 kCeilingCheckHeight = 55.0f;
 constexpr f32 kRadiansToN64Angle = 32768.0f / 3.14159265358979323846f;
-constexpr f32 kCameraDistance = 195.0f;
-constexpr f32 kCameraHeight = 43.0f;
-constexpr f32 kCameraFollowFactor = 0.24f;
-constexpr f32 kRightStickDeadzone = 0.17f;
-constexpr f32 kCameraYawSpeed = 0.047f;
-constexpr f32 kCameraPitchSpeed = 0.034f;
 
 bool sSpawningLocalPilot = false;
 bool sSpawnAttempted = false;
@@ -84,61 +78,16 @@ struct PilotRuntime {
     int lastObservedBombAmmo = -1;
     int lastObservedNutAmmo = -1;
     bool cameraReady = false;
-    bool splitPreviouslyEnabled = false;
-    f32 cameraYaw = 0.0f;
-    f32 cameraPitch = 0.15f;
     Vec3f cameraAt = {};
     Vec3f cameraEye = {};
+    Vec3f cameraUp = { 0.0f, 1.0f, 0.0f };
+    f32 cameraFov = 60.0f;
     PilotItemPose itemPose = PilotItemPose::None;
 };
 PilotRuntime sPilot;
 
 LinkAnimationHeader* Pilot_Animation(const char* asset) {
     return reinterpret_cast<LinkAnimationHeader*>(const_cast<char*>(asset));
-}
-
-// Separate orbit/follow state for P2; it never takes over the engine's
-// GET_ACTIVE_CAM, mainCamera, cutscene camera or P1 controller input.
-// The visual second pass reads these cached vectors after actor updates.
-void Pilot_UpdateCamera(Actor* actor, const Input& input) {
-    if (CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) == 0) {
-        sPilot.splitPreviouslyEnabled = false;
-        return;
-    }
-    if (!sPilot.splitPreviouslyEnabled) {
-        sPilot.cameraYaw = static_cast<f32>(actor->shape.rot.y) / kRadiansToN64Angle;
-        sPilot.cameraPitch = 0.15f;
-        sPilot.cameraReady = false;
-        sPilot.splitPreviouslyEnabled = true;
-    }
-
-    const f32 rightX = static_cast<f32>(input.cur.right_stick_x) / kMaxStickValue;
-    const f32 rightY = static_cast<f32>(input.cur.right_stick_y) / kMaxStickValue;
-    if (std::fabs(rightX) > kRightStickDeadzone) {
-        sPilot.cameraYaw -= rightX * kCameraYawSpeed;
-    }
-    if (std::fabs(rightY) > kRightStickDeadzone) {
-        sPilot.cameraPitch = std::clamp(sPilot.cameraPitch + rightY * kCameraPitchSpeed, -0.35f, 0.9f);
-    }
-
-    Vec3f at = { actor->world.pos.x, actor->world.pos.y + kCameraHeight, actor->world.pos.z };
-    Vec3f eye = {
-        at.x - std::sin(sPilot.cameraYaw) * kCameraDistance * std::cos(sPilot.cameraPitch),
-        at.y + std::sin(sPilot.cameraPitch) * kCameraDistance,
-        at.z - std::cos(sPilot.cameraYaw) * kCameraDistance * std::cos(sPilot.cameraPitch),
-    };
-    if (!sPilot.cameraReady) {
-        sPilot.cameraAt = at;
-        sPilot.cameraEye = eye;
-        sPilot.cameraReady = true;
-    } else {
-        sPilot.cameraAt.x += (at.x - sPilot.cameraAt.x) * kCameraFollowFactor;
-        sPilot.cameraAt.y += (at.y - sPilot.cameraAt.y) * kCameraFollowFactor;
-        sPilot.cameraAt.z += (at.z - sPilot.cameraAt.z) * kCameraFollowFactor;
-        sPilot.cameraEye.x += (eye.x - sPilot.cameraEye.x) * kCameraFollowFactor;
-        sPilot.cameraEye.y += (eye.y - sPilot.cameraEye.y) * kCameraFollowFactor;
-        sPilot.cameraEye.z += (eye.z - sPilot.cameraEye.z) * kCameraFollowFactor;
-    }
 }
 
 // P1 calls Inventory_ChangeAmmo(item, -1), which caps the *result* to the
@@ -316,7 +265,6 @@ void Pilot_Init(Actor* actor, PlayState* play) {
     sPilot.actor = actor;
     sPilot.lastObservedBombAmmo = AMMO(ITEM_BOMB);
     sPilot.lastObservedNutAmmo = AMMO(ITEM_NUT);
-    sPilot.cameraYaw = static_cast<f32>(actor->shape.rot.y) / kRadiansToN64Angle;
     NameTag_RegisterForActorWithOptions(actor, "P2 PILOT", {});
 }
 
@@ -412,7 +360,9 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     Actor_MoveXZGravity(actor);
     Actor_UpdateBgCheckInfo(play, actor, kWallCheckHeight, kWallCheckRadius, kCeilingCheckHeight, 0x1D);
     Actor_SetFocus(actor, 40.0f);
-    Pilot_UpdateCamera(actor, play->state.input[1]);
+    if (CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) == 0) {
+        sPilot.cameraReady = false;
+    }
     const bool grounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
     if (!wasGrounded && grounded && fallingBeforeMove) {
         sPilot.landingFrames = kLandingFrames;
@@ -585,17 +535,43 @@ static RegisterShipInitFunc sRegisterPilot(Pilot_RegisterHooks);
 
 } // namespace
 
-extern "C" s32 ShipCrewCamera_GetSecondView(PlayState* play, Vec3f* eye, Vec3f* at, Vec3f* up) {
-    if (play == nullptr || eye == nullptr || at == nullptr || up == nullptr ||
-        CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0 || CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) == 0 ||
+// P2's independently allocated native camera is updated once AFTER the
+// engine's P1 camera, never during actor update or scene rendering.
+extern "C" Player* ShipCrewCamera_GetNativeSecondPlayer(PlayState* play) {
+    if (play == nullptr || CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0 ||
+        CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) == 0 ||
+        CVarGetInteger(CVAR_ENHANCEMENT("IvanCoopModeEnabled"), 0) != 0 ||
         play->activeCamera != CAM_ID_MAIN || play->pauseCtx.state != 0 || play->pauseCtx.debugState != 0 ||
-        play->csCtx.state != CS_STATE_IDLE || R_PAUSE_MENU_MODE != 0 || !sPilot.cameraReady ||
-        FindPilotActor(play) != sPilot.actor) {
+        play->csCtx.state != CS_STATE_IDLE || R_PAUSE_MENU_MODE != 0 || GET_PLAYER(play) == nullptr ||
+        play->roomCtx.curRoom.meshHeader == nullptr || play->roomCtx.curRoom.meshHeader->base.type == 1) {
+        return nullptr;
+    }
+    Actor* pilot = FindPilotActor(play);
+    return pilot != nullptr && sPilot.actor == pilot ? reinterpret_cast<Player*>(pilot) : nullptr;
+}
+
+extern "C" void ShipCrewCamera_SetNativeSecondView(PlayState* play, const Vec3f* eye, const Vec3f* at,
+                                                     const Vec3f* up, f32 fov) {
+    if (play == nullptr || eye == nullptr || at == nullptr || up == nullptr ||
+        FindPilotActor(play) != sPilot.actor || sPilot.actor == nullptr) {
+        return;
+    }
+    sPilot.cameraEye = *eye;
+    sPilot.cameraAt = *at;
+    sPilot.cameraUp = *up;
+    sPilot.cameraFov = fov;
+    sPilot.cameraReady = true;
+}
+
+extern "C" s32 ShipCrewCamera_GetSecondView(PlayState* play, Vec3f* eye, Vec3f* at, Vec3f* up, f32* fov) {
+    if (eye == nullptr || at == nullptr || up == nullptr || fov == nullptr ||
+        ShipCrewCamera_GetNativeSecondPlayer(play) == nullptr || !sPilot.cameraReady) {
         return false;
     }
     *eye = sPilot.cameraEye;
     *at = sPilot.cameraAt;
-    *up = { 0.0f, 1.0f, 0.0f };
+    *up = sPilot.cameraUp;
+    *fov = sPilot.cameraFov;
     return true;
 }
 
