@@ -21,6 +21,7 @@ TransitionUnk sTrnsnUnk;
 s32 gTrnsnUnkState;
 VisMono gPlayVisMono;
 Color_RGBA8_u32 gVisMonoColor;
+static u8 sShipCrewSplitRenderMarker;
 
 FaultClient D_801614B8;
 
@@ -33,6 +34,12 @@ Input* D_8012D1F8 = NULL;
 
 PlayState* gPlayState;
 s16 firstInit = 0;
+
+// ShipCrew local co-op's opt-in split render bridge. Unlike subcameras used
+// for cutscenes, P2's free orbit camera is kept outside play->cameraPtrs.
+// Both viewports render the same scene/actor lists, only once per game update.
+s32 ShipCrewCamera_GetSecondView(PlayState* play, Vec3f* eye, Vec3f* at, Vec3f* up);
+void ShipCrewCamera_SetSecondaryPass(s32 active);
 
 void Play_SpawnScene(PlayState* play, s32 sceneId, s32 spawn);
 
@@ -1308,6 +1315,16 @@ void Play_Draw(PlayState* play) {
     Lights* sp228;
     Vec3f sp21C;
 
+    Vec3f shipSecondEye;
+    Vec3f shipSecondAt;
+    Vec3f shipSecondUp;
+    // Prerendered background rooms do not support a second 3D camera.
+    // Cutscenes and paused/menu frames are rejected by the camera bridge.
+    const s32 shipSplit = (gTrnsnUnkState == 0) && (play->roomCtx.curRoom.meshHeader != NULL) &&
+                          (play->roomCtx.curRoom.meshHeader->base.type != 1) &&
+                          ShipCrewCamera_GetSecondView(play, &shipSecondEye, &shipSecondAt, &shipSecondUp);
+    const Viewport shipFullViewport = play->view.viewport;
+
     // #region SOH [Port] Frame buffer effects for pause menu
     // Track render size when paused and that a copy was performed
     static u32 lastPauseWidth;
@@ -1356,6 +1373,12 @@ void Play_Draw(PlayState* play) {
 
         POLY_OPA_DISP = Play_SetFog(play, POLY_OPA_DISP);
         POLY_XLU_DISP = Play_SetFog(play, POLY_XLU_DISP);
+
+        if (shipSplit) {
+            Viewport firstViewport = shipFullViewport;
+            firstViewport.rightX = SCREEN_WIDTH / 2;
+            View_SetViewport(&play->view, &firstViewport);
+        }
 
         func_800AA460(&play->view, play->view.fovy, play->view.zNear, play->lightCtx.fogFar);
         func_800AAA50(&play->view, 15);
@@ -1606,6 +1629,83 @@ void Play_Draw(PlayState* play) {
         // Draw Enhancements that need to be placed in the world. This happens before the PostWorldDraw
         // so that they aren't drawn when the pause menu is up (e.g. collision viewer, actor name tags)
         GameInteractor_ExecuteOnPlayDrawEnd();
+
+        if (shipSplit) {
+            // Keep the original P1 camera/view and shared gameplay state.
+            // Only draw a second 3D world view here; NEVER run Play_Update,
+            // the HUD, messages, or gameplay hooks a second time.
+            View shipFirstView = play->view;
+            MtxF shipFirstProjection = play->viewProjectionMtxF;
+            MtxF shipFirstBillboard = play->billboardMtxF;
+            Mtx* shipFirstBillboardPtr = play->billboardMtx;
+            Viewport secondViewport = shipFullViewport;
+            secondViewport.leftX = SCREEN_WIDTH / 2;
+
+            ShipCrewCamera_SetSecondaryPass(1);
+            View_SetViewport(&play->view, &secondViewport);
+            func_800AA358(&play->view, &shipSecondEye, &shipSecondAt, &shipSecondUp);
+            func_800AA460(&play->view, shipFirstView.fovy, shipFirstView.zNear, play->lightCtx.fogFar);
+            func_800AAA50(&play->view, 15);
+
+            // Both camera passes need their own view-projection and billboard
+            // matrices; otherwise second-pass Link models still face P1's view.
+            if (CVarGetInteger(CVAR_ENHANCEMENT("MirroredWorld"), 0)) {
+                gSPMatrix(POLY_OPA_DISP++, play->view.projectionFlippedPtr,
+                          G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
+                gSPMatrix(POLY_XLU_DISP++, play->view.projectionFlippedPtr,
+                          G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
+                gSPMatrix(POLY_OPA_DISP++, play->view.viewingPtr, G_MTX_NOPUSH | G_MTX_MUL | G_MTX_PROJECTION);
+                gSPMatrix(POLY_XLU_DISP++, play->view.viewingPtr, G_MTX_NOPUSH | G_MTX_MUL | G_MTX_PROJECTION);
+            }
+
+            Matrix_MtxToMtxF(&play->view.viewing, &play->billboardMtxF);
+            Matrix_MtxToMtxF(&play->view.projection, &play->viewProjectionMtxF);
+            Matrix_Mult(&play->viewProjectionMtxF, MTXMODE_NEW);
+            Matrix_Mult(&play->billboardMtxF, MTXMODE_APPLY);
+            Matrix_Get(&play->viewProjectionMtxF);
+            play->billboardMtxF.mf[0][3] = play->billboardMtxF.mf[1][3] = play->billboardMtxF.mf[2][3] =
+                play->billboardMtxF.mf[3][0] = play->billboardMtxF.mf[3][1] = play->billboardMtxF.mf[3][2] = 0.0f;
+            Matrix_Transpose(&play->billboardMtxF);
+            play->billboardMtx =
+                Matrix_MtxFToMtx(MATRIX_CHECKFLOATS(&play->billboardMtxF), Graph_Alloc(gfxCtx, sizeof(Mtx)));
+            gSPSegment(POLY_OPA_DISP++, 0x01, play->billboardMtx);
+
+            // Drawing the scene twice must never advance the scene clock,
+            // call Environment_Update*, run player AI or consume inventory.
+            // This pilot intentionally renders only static world and actors
+            // in P2's pass; particles, post-processing, name tags and the HUD
+            // still belong to the first pass until they are made view-aware.
+            POLY_OPA_DISP = Play_SetFog(play, POLY_OPA_DISP);
+            POLY_XLU_DISP = Play_SetFog(play, POLY_XLU_DISP);
+            FrameInterpolation_RecordOpenChild(&sShipCrewSplitRenderMarker, 2);
+            if (play->skyboxId && play->skyboxId != SKYBOX_UNSET_1D && !play->envCtx.skyboxDisabled) {
+                if (play->skyboxId == SKYBOX_NORMAL_SKY || play->skyboxId == SKYBOX_CUTSCENE_MAP) {
+                    SkyboxDraw_Draw(&play->skyboxCtx, gfxCtx, play->skyboxId, play->envCtx.skyboxBlend,
+                                    play->view.eye.x, play->view.eye.y, play->view.eye.z);
+                } else if (play->skyboxCtx.unk_140 == 0) {
+                    SkyboxDraw_Draw(&play->skyboxCtx, gfxCtx, play->skyboxId, 0, play->view.eye.x, play->view.eye.y,
+                                    play->view.eye.z);
+                }
+            }
+            Scene_Draw(play);
+            Room_Draw(play, &play->roomCtx.curRoom, 3);
+            Room_Draw(play, &play->roomCtx.prevRoom, 3);
+            Actor_DrawAll(play, &play->actorCtx);
+            FrameInterpolation_RecordCloseChild();
+
+            ShipCrewCamera_SetSecondaryPass(0);
+            play->view = shipFirstView;
+            play->viewProjectionMtxF = shipFirstProjection;
+            play->billboardMtxF = shipFirstBillboard;
+            play->billboardMtx = shipFirstBillboardPtr;
+            Matrix_Mult(&shipFirstProjection, MTXMODE_NEW);
+
+            // Restore the full viewport for any later non-world graphics;
+            // the original P1 camera remains the engine's active camera.
+            Viewport restoredViewport = shipFullViewport;
+            View_SetViewport(&play->view, &restoredViewport);
+            func_800AAA50(&play->view, 15);
+        }
 
     Play_Draw_DrawOverlayElements:
         if ((HREG(80) != 10) || (HREG(89) != 0)) {

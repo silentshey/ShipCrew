@@ -3044,6 +3044,9 @@ s32 Ship_CalcShouldDrawAndUpdate(PlayState* play, Actor* actor, Vec3f* projected
 }
 // #endregion
 
+// True only during ShipCrew's experimental right-hand viewport pass.
+s32 ShipCrewCamera_IsSecondaryPass(void);
+
 void Actor_DrawAll(PlayState* play, ActorContext* actorCtx) {
     s32 invisibleActorCounter;
     Actor* invisibleActors[INVISIBLE_ACTOR_MAX];
@@ -3052,6 +3055,42 @@ void Actor_DrawAll(PlayState* play, ActorContext* actorCtx) {
     s32 i;
 
     invisibleActorCounter = 0;
+
+    if (ShipCrewCamera_IsSecondaryPass()) {
+        // The regular Actor_DrawAll does much more than render: it plays
+        // sounds, changes persistent actor culling flags, draws effects and
+        // HUD-adjacent objects. The second split view needs only geometry.
+        // Reproject actor bounds into P2's camera and restore P1's cached
+        // state immediately after each draw, with NO second gameplay update.
+        for (i = 0; i < ARRAY_COUNT(actorCtx->actorLists); i++) {
+            for (actor = actorCtx->actorLists[i].head; actor != NULL; actor = actor->next) {
+                if (actor->init != NULL || actor->draw == NULL) {
+                    continue;
+                }
+                Vec3f savedProjectedPos = actor->projectedPos;
+                f32 savedProjectedW = actor->projectedW;
+                s32 savedDrawn = actor->isDrawn;
+                s32 savedCulling = (actor->flags & ACTOR_FLAG_INSIDE_CULLING_VOLUME) != 0;
+
+                SkinMatrix_Vec3fMtxFMultXYZW(&play->viewProjectionMtxF, &actor->world.pos, &actor->projectedPos,
+                                             &actor->projectedW);
+                if ((actor->flags & ACTOR_FLAG_DRAW_CULLING_DISABLED) || Actor_CullingCheck(play, actor)) {
+                    actor->flags |= ACTOR_FLAG_INSIDE_CULLING_VOLUME;
+                    Actor_Draw(play, actor);
+                }
+
+                actor->projectedPos = savedProjectedPos;
+                actor->projectedW = savedProjectedW;
+                actor->isDrawn = savedDrawn;
+                if (savedCulling) {
+                    actor->flags |= ACTOR_FLAG_INSIDE_CULLING_VOLUME;
+                } else {
+                    actor->flags &= ~ACTOR_FLAG_INSIDE_CULLING_VOLUME;
+                }
+            }
+        }
+        return;
+    }
 
     OPEN_DISPS(play->state.gfxCtx);
 

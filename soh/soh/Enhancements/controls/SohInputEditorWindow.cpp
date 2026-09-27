@@ -1639,8 +1639,18 @@ void SohInputEditorWindow::DrawLinkTab() {
                                   "C-Left: take out one bomb, then press A to place/throw it.\\n"
                                   "C-Right: use one Deku Nut per separate press.\\n"
                                   "Both share save ammo; buttons must be released before reuse.\\n"
-                                  "New roll/item animations and gravity are experimental. No independent camera, "
-                                  "combat or full interaction system yet. Test on a spare save."));
+                                  "New roll/item animations and gravity are experimental. Use a test save."));
+
+        CVarCheckbox("ShipCrew: Vertical Split-Screen Camera (Experimental)", CVAR_SETTING("ShipCrew.SplitScreenPilot"),
+                     CheckboxOptions()
+                         .Color(THEME_COLOR)
+                         .Tooltip("Requires the Two-Link Pilot above. Renders the same 3D world twice: "
+                                  "P1 on the left and P2 on the right.\\n"
+                                  "P2: right stick orbits/pitches their own camera; movement becomes "
+                                  "camera-relative. P1 camera and the shared inventory are unchanged.\\n"
+                                  "For safety, cutscenes, pause screens and prerendered rooms remain "
+                                  "single view. HUD/effects and some actor culling are P1-only "
+                                  "during this early graphics test. Disable here to revert."));
 
         DrawPortMappings(portIndex);
 
@@ -1686,9 +1696,11 @@ void SohInputEditorWindow::DrawIvanTab() {
         DrawSetDefaultsButton(portIndex);
         DrawDeviceToggles(portIndex);
 
-        ImGui::TextWrapped("ShipCrew P2 uses the same editable controller mappings as P1. "
-                           "Gameplay settings (camera, ocarina and global options) are still shared or "
-                           "P1-only until independent P2 gameplay/camera support is implemented.");
+        ImGui::TextWrapped("ShipCrew P2 has independent physical button/stick mappings. "
+                           "When the experimental vertical split is enabled in the P1 tab, "
+                           "P2 right stick orbits an independent camera and movement becomes "
+                           "camera-relative. Other camera enhancements, the HUD, ocarina and "
+                           "global gameplay options still belong to P1/the shared game.");
         DrawPortMappings(portIndex);
         ImGui::EndTabItem();
     }
