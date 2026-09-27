@@ -445,11 +445,11 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         // Native Link rolls at 1.5 times the curved stick speed, minimum 3.
         const f32 magnitude = 80.0f * std::min(inputLength, 1.0f);
         const f32 speedCap = ShipCrewPlayer_GetRunSpeedLimit();
-        sPilot.rollSpeed = nativeMovement
-                               ? std::max(3.0f, ShipCrewPlayer_CalcGroundSpeedTarget(
-                                                    magnitude, speedCap, player->floorPitch, true) *
-                                                    1.5f)
-                               : kRollSpeed;
+        sPilot.rollSpeed =
+            nativeMovement
+                ? std::max(3.0f,
+                           ShipCrewPlayer_CalcGroundSpeedTarget(magnitude, speedCap, player->floorPitch, true) * 1.5f)
+                : kRollSpeed;
         sPilot.rollYaw = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
         sPilot.landingFrames = 0;
     }
@@ -469,19 +469,18 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                          nativeLimit;
         }
         player->unk_880 = speedLimit;
-        const f32 nativeTarget = canAct && moving
-                                     ? ShipCrewPlayer_CalcGroundSpeedTarget(
-                                           stickMagnitude, speedLimit, player->floorPitch,
-                                           sPilot.lockedTarget == nullptr && !sPilot.parallelTargeting)
-                                     : 0.0f;
+        const f32 nativeTarget =
+            canAct && moving
+                ? ShipCrewPlayer_CalcGroundSpeedTarget(stickMagnitude, speedLimit, player->floorPitch,
+                                                       sPilot.lockedTarget == nullptr && !sPilot.parallelTargeting)
+                : 0.0f;
         if (sPilot.rollFrames > 0) {
             actor->speedXZ = sPilot.rollSpeed;
             actor->world.rot.y = sPilot.rollYaw;
             player->linearVelocity = sPilot.rollSpeed;
             player->yaw = sPilot.rollYaw;
         } else {
-            const s16 desiredYaw =
-                static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
+            const s16 desiredYaw = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
             const s16 yawDiff = desiredYaw - player->yaw;
             const bool brakingTurn = canAct && moving && wasGrounded && std::abs(static_cast<s32>(yawDiff)) > 0x4000;
             f32 motionTarget = nativeTarget;
@@ -497,8 +496,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                 // speed multipliers and asymmetric speed steps.
                 const bool running = motionTarget > 4.9f;
                 motionTarget *= running ? 0.9f : 0.4f;
-                Math_AsymStepToF(&player->linearVelocity, motionTarget, running ? 2.0f : 1.5f,
-                                 running ? 3.0f : 1.5f);
+                Math_AsymStepToF(&player->linearVelocity, motionTarget, running ? 2.0f : 1.5f, running ? 3.0f : 1.5f);
             }
             actor->speedXZ = std::max(player->linearVelocity, 0.0f);
             actor->world.rot.y = player->yaw;
@@ -583,9 +581,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     bool locomotionLoop = false;
     const f32 nativeInputSpeed = nativeMovement && moving
                                      ? ShipCrewPlayer_CalcGroundSpeedTarget(
-                                           80.0f * std::min(inputLength, 1.0f), player->unk_880,
-                                           player->floorPitch, sPilot.lockedTarget == nullptr &&
-                                                                   !sPilot.parallelTargeting)
+                                           80.0f * std::min(inputLength, 1.0f), player->unk_880, player->floorPitch,
+                                           sPilot.lockedTarget == nullptr && !sPilot.parallelTargeting)
                                      : 0.0f;
     const bool running = nativeMovement ? nativeInputSpeed > 4.9f : inputLength > kWalkThreshold;
     if (sPilot.rollFrames > 0 && grounded) {
@@ -593,9 +590,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                                    : Pilot_Animation(gPlayerAnim_link_normal_landing_roll_free);
         mode = ANIMMODE_ONCE;
     } else if (!grounded) {
-        animation = nativeMovement && actor->speedXZ > 4.0f
-                        ? Pilot_Animation(gPlayerAnim_link_normal_run_jump)
-                        : Pilot_Animation(gPlayerAnim_link_normal_jump);
+        animation = nativeMovement && actor->speedXZ > 4.0f ? Pilot_Animation(gPlayerAnim_link_normal_run_jump)
+                                                            : Pilot_Animation(gPlayerAnim_link_normal_jump);
         sPilot.landingFrames = 0;
     } else if (sPilot.itemFrames > 0) {
         switch (sPilot.itemPose) {
@@ -629,13 +625,13 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             } else if (facingDiff < -0x2000) {
                 animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_side_walkL);
             } else {
-                animation = ShipCrewPlayer_GetGroupAnimation(
-                    player, running ? PLAYER_ANIMGROUP_run : PLAYER_ANIMGROUP_walk);
+                animation =
+                    ShipCrewPlayer_GetGroupAnimation(player, running ? PLAYER_ANIMGROUP_run : PLAYER_ANIMGROUP_walk);
             }
             locomotionLoop = true;
         } else {
-            animation = ShipCrewPlayer_GetGroupAnimation(
-                player, running ? PLAYER_ANIMGROUP_run : PLAYER_ANIMGROUP_walk);
+            animation =
+                ShipCrewPlayer_GetGroupAnimation(player, running ? PLAYER_ANIMGROUP_run : PLAYER_ANIMGROUP_walk);
             locomotionLoop = true;
         }
     } else if (!moving) {
