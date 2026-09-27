@@ -25,7 +25,6 @@ static u8 sShipCrewSplitRenderMarker;
 static s32 sShipCrewSplitDrawActive = false;
 static MtxF sShipCrewSecondViewProjection;
 
-
 FaultClient D_801614B8;
 
 s16 sTransitionFillTimer;
