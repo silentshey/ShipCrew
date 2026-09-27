@@ -7869,8 +7869,7 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
             p2Camera.target = NULL;
             if (p2Camera.mode != CAM_MODE_TARGET)
                 Camera_RequestModeImpl(&p2Camera, CAM_MODE_TARGET, true);
-        } else if (p2Camera.target != NULL || p2Camera.mode == CAM_MODE_BATTLE ||
-                   p2Camera.mode == CAM_MODE_TARGET) {
+        } else if (p2Camera.target != NULL || p2Camera.mode == CAM_MODE_BATTLE || p2Camera.mode == CAM_MODE_TARGET) {
             p2Camera.target = NULL;
             Camera_RequestModeImpl(&p2Camera, CAM_MODE_NORMAL, true);
         }
