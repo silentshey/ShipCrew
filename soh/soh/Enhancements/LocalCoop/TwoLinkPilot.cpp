@@ -100,8 +100,8 @@ void Pilot_ConsumeOneSharedAmmo(s16 item, s16 countBeforeSpawn) {
         // Reuse the exact P1 gameplay/statistics path for normal saves.
         Inventory_ChangeAmmo(item, -1);
     } else {
-        SPDLOG_WARN("[ShipCrew] P2 item {}: spawn changed shared ammo from {} to {}; avoiding a second debit",
-                    item, countBeforeSpawn, afterSpawn);
+        SPDLOG_WARN("[ShipCrew] P2 item {}: spawn changed shared ammo from {} to {}; avoiding a second debit", item,
+                    countBeforeSpawn, afterSpawn);
     }
 
     const s16 afterDebit = AMMO(item);
