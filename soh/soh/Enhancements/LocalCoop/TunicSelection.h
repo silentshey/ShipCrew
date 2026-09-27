@@ -12,9 +12,7 @@ namespace ShipCrew {
 
 inline constexpr std::size_t kMaxLocalPlayers = 4;
 
-enum class TunicColor : std::uint8_t {
-    Green, Red, Blue, Purple, Yellow, Orange, White, Black, Pink, Cyan, Count
-};
+enum class TunicColor : std::uint8_t { Green, Red, Blue, Purple, Yellow, Orange, White, Black, Pink, Cyan, Count };
 
 struct Rgb {
     std::uint8_t r, g, b;
@@ -27,22 +25,21 @@ struct TunicPaletteEntry {
 };
 
 // The RGB values are initial UI/rendering targets, not final color grading.
-inline constexpr std::array<TunicPaletteEntry, 10> kTunicPalette{{
-    { TunicColor::Green,  "Green",  {  35, 135,  43 } },
-    { TunicColor::Red,    "Red",    { 177,  35,  42 } },
-    { TunicColor::Blue,   "Blue",   {  37,  82, 186 } },
-    { TunicColor::Purple, "Purple", { 111,  62, 157 } },
-    { TunicColor::Yellow, "Yellow", { 218, 185,  39 } },
-    { TunicColor::Orange, "Orange", { 210, 101,  28 } },
-    { TunicColor::White,  "White",  { 232, 233, 224 } },
-    { TunicColor::Black,  "Black",  {  36,  37,  46 } },
-    { TunicColor::Pink,   "Pink",   { 217, 105, 158 } },
-    { TunicColor::Cyan,   "Cyan",   {  41, 173, 185 } },
-}};
+inline constexpr std::array<TunicPaletteEntry, 10> kTunicPalette{ {
+    { TunicColor::Green, "Green", { 35, 135, 43 } },
+    { TunicColor::Red, "Red", { 177, 35, 42 } },
+    { TunicColor::Blue, "Blue", { 37, 82, 186 } },
+    { TunicColor::Purple, "Purple", { 111, 62, 157 } },
+    { TunicColor::Yellow, "Yellow", { 218, 185, 39 } },
+    { TunicColor::Orange, "Orange", { 210, 101, 28 } },
+    { TunicColor::White, "White", { 232, 233, 224 } },
+    { TunicColor::Black, "Black", { 36, 37, 46 } },
+    { TunicColor::Pink, "Pink", { 217, 105, 158 } },
+    { TunicColor::Cyan, "Cyan", { 41, 173, 185 } },
+} };
 
-inline constexpr std::array<TunicColor, kMaxLocalPlayers> kDefaultTunicChoices{
-    TunicColor::Green, TunicColor::Red, TunicColor::Blue, TunicColor::Purple
-};
+inline constexpr std::array<TunicColor, kMaxLocalPlayers> kDefaultTunicChoices{ TunicColor::Green, TunicColor::Red,
+                                                                                TunicColor::Blue, TunicColor::Purple };
 
 [[nodiscard]] constexpr bool IsValidTunicColor(TunicColor color) {
     return static_cast<std::size_t>(color) < kTunicPalette.size();
@@ -89,8 +86,8 @@ class TunicSelection {
 
     // Changing one player's choice never silently changes another's.
     [[nodiscard]] bool Select(std::size_t slot, TunicColor color) {
-        if (slot >= kMaxLocalPlayers || !active_[slot].has_value() ||
-            !IsValidTunicColor(color) || TakenByAnother(slot, color)) {
+        if (slot >= kMaxLocalPlayers || !active_[slot].has_value() || !IsValidTunicColor(color) ||
+            TakenByAnother(slot, color)) {
             return false;
         }
         active_[slot] = color;
@@ -114,7 +111,9 @@ class TunicSelection {
         return slot < kMaxLocalPlayers && IsValidTunicColor(color) && !TakenByAnother(slot, color);
     }
 
-    [[nodiscard]] Preferences SavedPreferences() const { return preferences_; }
+    [[nodiscard]] Preferences SavedPreferences() const {
+        return preferences_;
+    }
 
   private:
     [[nodiscard]] bool TakenByAnother(std::size_t slot, TunicColor color) const {
