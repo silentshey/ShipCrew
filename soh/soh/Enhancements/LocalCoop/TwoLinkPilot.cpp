@@ -6,6 +6,7 @@
 #include <cmath>
 
 #include <libultraship/bridge/consolevariablebridge.h>
+#include <spdlog/spdlog.h>
 
 #include "soh/Enhancements/enhancementTypes.h"
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
@@ -69,12 +70,51 @@ struct PilotRuntime {
     int rollFrames = 0;
     int landingFrames = 0;
     int itemFrames = 0;
+    // Track shared ammo between P2 updates. A changed value outside a P2
+    // item transaction comes from P1, a save edit, or an external sync.
+    int lastObservedBombAmmo = -1;
+    int lastObservedNutAmmo = -1;
     PilotItemPose itemPose = PilotItemPose::None;
 };
 PilotRuntime sPilot;
 
 LinkAnimationHeader* Pilot_Animation(const char* asset) {
     return reinterpret_cast<LinkAnimationHeader*>(const_cast<char*>(asset));
+}
+
+// P1 calls Inventory_ChangeAmmo(item, -1), which caps the *result* to the
+// save's upgrade capacity. If a test/edited/shared save has ammunition but no
+// matching Bomb Bag/Nut upgrade (capacity 0), even one normal decrement
+// silently sets the entire stock to zero. Preserve the actual shared stock's
+// exact one-item delta, without creating a separate P2 inventory.
+//
+// Snapshot BEFORE Actor_Spawn. If an actor-spawn hook already consumed the
+// item, do not charge it a second time. Unlike forcing a fixed count after
+// each frame, this only reconciles one successfully spawned item transaction.
+void Pilot_ConsumeOneSharedAmmo(s16 item, s16 countBeforeSpawn) {
+    const s16 expected = countBeforeSpawn - 1;
+    const s16 afterSpawn = AMMO(item);
+    const s16 capacity = item == ITEM_BOMB ? CUR_CAPACITY(UPG_BOMB_BAG) : CUR_CAPACITY(UPG_NUTS);
+
+    if (afterSpawn == countBeforeSpawn) {
+        // Reuse the exact P1 gameplay/statistics path for normal saves.
+        Inventory_ChangeAmmo(item, -1);
+    } else {
+        SPDLOG_WARN("[ShipCrew] P2 item {}: spawn changed shared ammo from {} to {}; avoiding a second debit", item,
+                    countBeforeSpawn, afterSpawn);
+    }
+
+    const s16 afterDebit = AMMO(item);
+    if (afterDebit != expected) {
+        SPDLOG_WARN("[ShipCrew] P2 item {}: correcting unexpected ammo change {} -> {} "
+                    "(before={}, afterSpawn={}, upgradeCapacity={})",
+                    item, afterDebit, expected, countBeforeSpawn, afterSpawn, capacity);
+        // Restore ONLY this item's ammo slot. Do not copy/replace inventory or
+        // interfere with Anchor's shared SaveContext synchronization.
+        AMMO(item) = static_cast<s8>(expected);
+    }
+    SPDLOG_INFO("[ShipCrew] P2 item {} consumed: {} -> {} (upgradeCapacity={})", item, countBeforeSpawn, AMMO(item),
+                capacity);
 }
 
 // Do not dereference a bomb pointer until the actual explosive list confirms
@@ -114,6 +154,7 @@ void Pilot_UseBomb(Actor* actor, PlayState* play) {
         Sfx_PlaySfxCentered(NA_SE_SY_ERROR);
         return;
     }
+    const s16 ammoBeforeSpawn = AMMO(ITEM_BOMB);
     const f32 radians = static_cast<f32>(actor->shape.rot.y) / kRadiansToN64Angle;
     Actor* bomb = Actor_SpawnAsChild(&play->actorCtx, actor, play, ACTOR_EN_BOM,
                                      actor->world.pos.x + std::sin(radians) * 10.0f, actor->world.pos.y + 48.0f,
@@ -129,7 +170,7 @@ void Pilot_UseBomb(Actor* actor, PlayState* play) {
     }
     bomb->room = -1;
     sPilot.heldBomb = bomb;
-    Inventory_ChangeAmmo(ITEM_BOMB, -1);
+    Pilot_ConsumeOneSharedAmmo(ITEM_BOMB, ammoBeforeSpawn);
     sPilot.itemPose = PilotItemPose::BombPickup;
     sPilot.itemFrames = kItemFrames;
     sPilot.itemDebounceFrames = kItemDebounceFrames;
@@ -172,13 +213,14 @@ void Pilot_UseNut(Actor* actor, PlayState* play) {
         Sfx_PlaySfxCentered(NA_SE_SY_ERROR);
         return;
     }
+    const s16 ammoBeforeSpawn = AMMO(ITEM_NUT);
     const f32 radians = static_cast<f32>(actor->shape.rot.y) / kRadiansToN64Angle;
     Actor* nut =
         Actor_Spawn(&play->actorCtx, play, ACTOR_EN_ARROW, actor->world.pos.x + std::sin(radians) * kItemDropDistance,
                     actor->world.pos.y + 35.0f, actor->world.pos.z + std::cos(radians) * kItemDropDistance, 0x1000,
                     actor->shape.rot.y, 0, ARROW_NUT);
     if (nut != nullptr) {
-        Inventory_ChangeAmmo(ITEM_NUT, -1);
+        Pilot_ConsumeOneSharedAmmo(ITEM_NUT, ammoBeforeSpawn);
         sPilot.itemPose = PilotItemPose::Nut;
         sPilot.itemFrames = kItemFrames;
         sPilot.itemDebounceFrames = kItemDebounceFrames;
@@ -213,6 +255,8 @@ void Pilot_Init(Actor* actor, PlayState* play) {
 
     sPilot = {};
     sPilot.actor = actor;
+    sPilot.lastObservedBombAmmo = AMMO(ITEM_BOMB);
+    sPilot.lastObservedNutAmmo = AMMO(ITEM_NUT);
     NameTag_RegisterForActorWithOptions(actor, "P2 PILOT", {});
 }
 
@@ -224,6 +268,18 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     if (sPilot.actor != actor) {
         sPilot = {};
         sPilot.actor = actor;
+    }
+
+    // Track inventory changes that happen outside P2's own one-use handler.
+    // These can be expected P1 usage, Anchor synchronization or other hooks;
+    // the diagnostic distinguishes them from an incorrect P2 debit.
+    if (sPilot.lastObservedBombAmmo >= 0 && sPilot.lastObservedBombAmmo != AMMO(ITEM_BOMB)) {
+        SPDLOG_INFO("[ShipCrew] Shared bomb ammo changed outside P2 update: {} -> {}", sPilot.lastObservedBombAmmo,
+                    AMMO(ITEM_BOMB));
+    }
+    if (sPilot.lastObservedNutAmmo >= 0 && sPilot.lastObservedNutAmmo != AMMO(ITEM_NUT)) {
+        SPDLOG_INFO("[ShipCrew] Shared nut ammo changed outside P2 update: {} -> {}", sPilot.lastObservedNutAmmo,
+                    AMMO(ITEM_NUT));
     }
 
     // Player 2 reads only port 2. Never redirect GET_PLAYER or input[0]:
@@ -354,6 +410,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     player->currentTunic = GET_PLAYER(play)->currentTunic;
     player->currentBoots = GET_PLAYER(play)->currentBoots;
     player->currentShield = GET_PLAYER(play)->currentShield;
+    sPilot.lastObservedBombAmmo = AMMO(ITEM_BOMB);
+    sPilot.lastObservedNutAmmo = AMMO(ITEM_NUT);
 }
 
 void Pilot_Draw(Actor* actor, PlayState* play) {
