@@ -1641,16 +1641,18 @@ void SohInputEditorWindow::DrawLinkTab() {
                                   "Both share save ammo; buttons must be released before reuse.\\n"
                                   "New roll/item animations and gravity are experimental. Use a test save."));
 
-        CVarCheckbox("ShipCrew: Vertical Split-Screen Camera (Experimental)", CVAR_SETTING("ShipCrew.SplitScreenPilot"),
+        CVarCheckbox("ShipCrew: Native P2 Camera + Vertical Split-Screen (Experimental)",
+                     CVAR_SETTING("ShipCrew.SplitScreenPilot"),
                      CheckboxOptions()
                          .Color(THEME_COLOR)
-                         .Tooltip("Requires the Two-Link Pilot above. Renders the same 3D world twice: "
-                                  "P1 on the left and P2 on the right.\\n"
-                                  "P2: right stick orbits/pitches their own camera; movement becomes "
-                                  "camera-relative. P1 camera and the shared inventory are unchanged.\\n"
-                                  "For safety, cutscenes, pause screens and prerendered rooms remain "
-                                  "single view. HUD/effects and some actor culling are P1-only "
-                                  "during this early graphics test. Disable here to revert."));
+                         .Tooltip("Requires the Two-Link Pilot. Both players have independent normal "
+                                  "Ocarina of Time follow cameras with native wall-handling. "
+                                  "P1 on the left; P2 on the right.\\n"
+                                  "P2's free orbit/right-stick camera control has been removed. "
+                                  "P2 moves relative to its automatic camera.\\n"
+                                  "Z-targeting and scripted camera parity still need work. "
+                                  "Pause, cutscene and prerender rooms remain single view; "
+                                  "HUD is shared. Disable to use the tested single view."));
 
         DrawPortMappings(portIndex);
 
@@ -1696,11 +1698,11 @@ void SohInputEditorWindow::DrawIvanTab() {
         DrawSetDefaultsButton(portIndex);
         DrawDeviceToggles(portIndex);
 
-        ImGui::TextWrapped("ShipCrew P2 has independent physical button/stick mappings. "
-                           "When the experimental vertical split is enabled in the P1 tab, "
-                           "P2 right stick orbits an independent camera and movement becomes "
-                           "camera-relative. Other camera enhancements, the HUD, ocarina and "
-                           "global gameplay options still belong to P1/the shared game.");
+        ImGui::TextWrapped("ShipCrew P2 has independently assignable controller bindings. "
+                           "With Native P2 Camera + Split enabled in the P1 tab, P2 uses "
+                           "the original automatic camera solver including wall handling. "
+                           "Free orbit/right-stick rotation is disabled for now. "
+                           "Targeting, cutscenes, HUD and global options need more work.");
         DrawPortMappings(portIndex);
         ImGui::EndTabItem();
     }
