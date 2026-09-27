@@ -44,7 +44,6 @@ constexpr f32 kItemDropDistance = 27.0f;
 constexpr f32 kSpawnSeparation = 70.0f;
 constexpr f32 kPilotGravity = -1.0f;
 constexpr f32 kPilotTerminalVelocity = -18.0f;
-constexpr f32 kPilotHopVelocity = 8.0f;
 // World collisions only; player/NPC combat and interactions are later milestones.
 constexpr f32 kWallCheckHeight = 50.0f;
 constexpr f32 kWallCheckRadius = 22.0f;
@@ -159,11 +158,6 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     const bool wasGrounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
     const bool canAct = !Player_InBlockingCsMode(play, GET_PLAYER(play));
 
-    if (canAct && (pressed & BTN_A) && wasGrounded && sPilot.rollFrames == 0) {
-        actor->velocity.y = kPilotHopVelocity;
-        actor->bgCheckFlags &= ~BGCHECKFLAG_GROUND;
-        sPilot.landingFrames = 0;
-    }
     if (canAct && (pressed & BTN_B) && wasGrounded && moving && sPilot.rollFrames == 0 && sPilot.itemFrames == 0) {
         sPilot.rollFrames = kRollFrames;
         sPilot.landingFrames = 0;
@@ -205,16 +199,16 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         }
     }
 
-    // Keep P2's previously verified empty-handed stance; aerial and rolling
-    // poses use vanilla animations. A separate skelAnime belongs to this actor.
+    // Keep P2's previously verified empty-handed stance. Airborne animations
+    // play only when falling from terrain, not from an artificial A-button hop.
+    // A separate skelAnime belongs to this actor.
     LinkAnimationHeader* animation = nullptr;
     u8 mode = ANIMMODE_LOOP;
     if (sPilot.rollFrames > 0 && grounded) {
         animation = Pilot_Animation(gPlayerAnim_link_normal_landing_roll_free);
         mode = ANIMMODE_ONCE;
     } else if (!grounded) {
-        animation =
-            Pilot_Animation(actor->velocity.y > 0.5f ? gPlayerAnim_link_normal_jump_up : gPlayerAnim_link_normal_jump);
+        animation = Pilot_Animation(gPlayerAnim_link_normal_jump);
         sPilot.landingFrames = 0;
     } else if (sPilot.itemFrames > 0) {
         animation = Pilot_Animation(sPilot.itemPose == PilotItemPose::Bomb ? gPlayerAnim_link_normal_put_free
