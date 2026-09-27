@@ -538,22 +538,21 @@ static RegisterShipInitFunc sRegisterPilot(Pilot_RegisterHooks);
 // P2's independently allocated native camera is updated once AFTER the
 // engine's P1 camera, never during actor update or scene rendering.
 extern "C" Player* ShipCrewCamera_GetNativeSecondPlayer(PlayState* play) {
-    if (play == nullptr || CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0 ||
-        CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) == 0 ||
-        CVarGetInteger(CVAR_ENHANCEMENT("IvanCoopModeEnabled"), 0) != 0 ||
-        play->activeCamera != CAM_ID_MAIN || play->pauseCtx.state != 0 || play->pauseCtx.debugState != 0 ||
-        play->csCtx.state != CS_STATE_IDLE || R_PAUSE_MENU_MODE != 0 || GET_PLAYER(play) == nullptr ||
-        play->roomCtx.curRoom.meshHeader == nullptr || play->roomCtx.curRoom.meshHeader->base.type == 1) {
+    if (play == nullptr || CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0 || CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) == 0 ||
+        CVarGetInteger(CVAR_ENHANCEMENT("IvanCoopModeEnabled"), 0) != 0 || play->activeCamera != CAM_ID_MAIN ||
+        play->pauseCtx.state != 0 || play->pauseCtx.debugState != 0 || play->csCtx.state != CS_STATE_IDLE ||
+        R_PAUSE_MENU_MODE != 0 || GET_PLAYER(play) == nullptr || play->roomCtx.curRoom.meshHeader == nullptr ||
+        play->roomCtx.curRoom.meshHeader->base.type == 1) {
         return nullptr;
     }
     Actor* pilot = FindPilotActor(play);
     return pilot != nullptr && sPilot.actor == pilot ? reinterpret_cast<Player*>(pilot) : nullptr;
 }
 
-extern "C" void ShipCrewCamera_SetNativeSecondView(PlayState* play, const Vec3f* eye, const Vec3f* at,
-                                                     const Vec3f* up, f32 fov) {
-    if (play == nullptr || eye == nullptr || at == nullptr || up == nullptr ||
-        FindPilotActor(play) != sPilot.actor || sPilot.actor == nullptr) {
+extern "C" void ShipCrewCamera_SetNativeSecondView(PlayState* play, const Vec3f* eye, const Vec3f* at, const Vec3f* up,
+                                                   f32 fov) {
+    if (play == nullptr || eye == nullptr || at == nullptr || up == nullptr || FindPilotActor(play) != sPilot.actor ||
+        sPilot.actor == nullptr) {
         return;
     }
     sPilot.cameraEye = *eye;
