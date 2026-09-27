@@ -25,15 +25,6 @@ static u8 sShipCrewSplitRenderMarker;
 static s32 sShipCrewSplitDrawActive = false;
 static MtxF sShipCrewSecondViewProjection;
 
-// Interface_Draw executes after the world passes in this same frame. The
-// overlay reticles need the independently projected P2 view, not P1's matrix.
-s32 ShipCrewCamera_GetSplitOverlayProjection(PlayState* play, MtxF* out) {
-    if (!sShipCrewSplitDrawActive || play == NULL || play != gPlayState)
-        return false;
-    if (out != NULL)
-        *out = sShipCrewSecondViewProjection;
-    return true;
-}
 
 FaultClient D_801614B8;
 
@@ -45,6 +36,17 @@ UNK_TYPE D_8012D1F4 = 0; // unused
 Input* D_8012D1F8 = NULL;
 
 PlayState* gPlayState;
+
+// Interface_Draw executes after the world passes in this same frame. The
+// overlay reticles need the independently projected P2 view, not P1's matrix.
+s32 ShipCrewCamera_GetSplitOverlayProjection(PlayState* play, MtxF* out) {
+    if (!sShipCrewSplitDrawActive || play == NULL || play != gPlayState)
+        return false;
+    if (out != NULL)
+        *out = sShipCrewSecondViewProjection;
+    return true;
+}
+
 s16 firstInit = 0;
 
 // ShipCrew local co-op's opt-in split render bridge. Unlike subcameras used
