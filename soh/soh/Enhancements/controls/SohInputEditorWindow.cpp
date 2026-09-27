@@ -1624,7 +1624,6 @@ void SohInputEditorWindow::DrawPortMappings(uint8_t portIndex) {
 
 // The same physical mappings (buttons, dual sticks, rumble, gyro and LEDs)
 // are available on every player port. Gameplay options are not yet per-player.
-
 void SohInputEditorWindow::DrawLinkTab() {
     uint8_t portIndex = 0;
     if (ImGui::BeginTabItem(StringHelper::Sprintf("Link (P1)###port%d", portIndex).c_str())) {
@@ -1636,7 +1635,7 @@ void SohInputEditorWindow::DrawLinkTab() {
                      CheckboxOptions()
                          .Color(THEME_COLOR)
                          .Tooltip("P2 input uses controller port 2 (Link (P2) tab). Left stick: walk/run.\\n"
-                                  "B while moving: roll. A is not used for jumping.\\n"
+                                  "A while moving: roll. No manual jump. B sword combat is not ready.\\n"
                                   "C-Left: place a bomb. C-Right: throw a Deku Nut.\\n"
                                   "Bombs and nuts share the real save inventory and consume ammo.\\n"
                                   "New roll/item animations and gravity are experimental. No independent camera, "
