@@ -6,10 +6,17 @@ on:
     types:
       - completed
 
+# The workflow_run event executes in the base repository, so give this
+# reporting workflow only the access needed to read artifacts and edit PR text.
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+
 jobs:
   pr-artifacts:
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.event == 'pull_request' }}
+    if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' }}
     steps:
       - id: 'pr-number'
         uses: actions/github-script@v9
@@ -47,13 +54,20 @@ jobs:
               run_id: context.payload.workflow_run.id,
             });
 
-            return allArtifacts.data.artifacts.reduce((acc, item) => {
-              if (item.name === "soh.o2r") return acc;
+            const distributables = allArtifacts.data.artifacts.filter(item =>
+              item.name !== "soh.o2r" && !item.expired
+            );
+            if (distributables.length === 0) {
+              core.notice('No distributable build artifacts found; skipping PR update.');
+              return '';
+            }
+            return distributables.reduce((acc, item) => {
               acc += `
               - [${item.name}.zip](https://nightly.link/${context.repo.owner}/${context.repo.repo}/actions/artifacts/${item.id}.zip)`;
               return acc;
             }, '### Build Artifacts');
       - id: 'add-to-pr'
+        if: ${{ steps.artifacts-text.outputs.result != '' }}
         uses: garrettjoecox/pr-section@4.0.0
         with:
           repo-token: '${{ secrets.GITHUB_TOKEN }}'
