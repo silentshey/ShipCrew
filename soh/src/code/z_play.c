@@ -38,7 +38,9 @@ s16 firstInit = 0;
 // ShipCrew local co-op's opt-in split render bridge. Unlike subcameras used
 // for cutscenes, P2's free orbit camera is kept outside play->cameraPtrs.
 // Both viewports render the same scene/actor lists, only once per game update.
-s32 ShipCrewCamera_GetSecondView(PlayState* play, Vec3f* eye, Vec3f* at, Vec3f* up);
+// The native secondary camera updates once per gameplay frame after P1.
+void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play);
+s32 ShipCrewCamera_GetSecondView(PlayState* play, Vec3f* eye, Vec3f* at, Vec3f* up, f32* fov);
 void ShipCrewCamera_SetSecondaryPass(s32 active);
 
 void Play_SpawnScene(PlayState* play, s32 sceneId, s32 spawn);
@@ -1285,6 +1287,7 @@ skip:
         }
 
         Camera_Update(play->cameraPtrs[play->nextCamera]);
+        ShipCrewCamera_UpdateNativeSecondPlayer(play);
 
         PLAY_LOG(3814);
     }
@@ -1318,11 +1321,12 @@ void Play_Draw(PlayState* play) {
     Vec3f shipSecondEye;
     Vec3f shipSecondAt;
     Vec3f shipSecondUp;
+    f32 shipSecondFov = play->view.fovy;
     // Prerendered background rooms do not support a second 3D camera.
     // Cutscenes and paused/menu frames are rejected by the camera bridge.
     const s32 shipSplit = (gTrnsnUnkState == 0) && (play->roomCtx.curRoom.meshHeader != NULL) &&
                           (play->roomCtx.curRoom.meshHeader->base.type != 1) &&
-                          ShipCrewCamera_GetSecondView(play, &shipSecondEye, &shipSecondAt, &shipSecondUp);
+                          ShipCrewCamera_GetSecondView(play, &shipSecondEye, &shipSecondAt, &shipSecondUp, &shipSecondFov);
     const Viewport shipFullViewport = play->view.viewport;
 
     // #region SOH [Port] Frame buffer effects for pause menu
@@ -1644,7 +1648,7 @@ void Play_Draw(PlayState* play) {
             ShipCrewCamera_SetSecondaryPass(1);
             View_SetViewport(&play->view, &secondViewport);
             func_800AA358(&play->view, &shipSecondEye, &shipSecondAt, &shipSecondUp);
-            func_800AA460(&play->view, shipFirstView.fovy, shipFirstView.zNear, play->lightCtx.fogFar);
+            func_800AA460(&play->view, shipSecondFov, shipFirstView.zNear, play->lightCtx.fogFar);
             func_800AAA50(&play->view, 15);
 
             // Both camera passes need their own view-projection and billboard
