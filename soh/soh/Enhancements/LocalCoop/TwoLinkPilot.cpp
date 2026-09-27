@@ -1,9 +1,8 @@
 // Opt-in, deliberately limited first integration test for a second local Link.
-// Independent P2 positional movement; animation is mirrored from P1 for now.
+// Independent P2 movement and basic idle/run animation on P2's own skeleton.
 // This is not the final multiplayer actor/physics/camera architecture.
 
 #include <cmath>
-#include <cstring>
 
 #include <libultraship/bridge/consolevariablebridge.h>
 
@@ -16,6 +15,7 @@ extern "C" {
 #include "functions.h"
 #include "macros.h"
 #include "variables.h"
+#include "objects/gameplay_keep/gameplay_keep.h"
 
 extern PlayState* gPlayState;
 void Player_UseItem(PlayState* play, Player* player, s32 item);
@@ -87,15 +87,20 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         actor->world.rot.y = actor->shape.rot.y;
     }
 
-    // Proof-of-concept only: safely reuse P1's pose for a visible Link.
-    // Dedicated P2 animation, gravity, collisions and interactions come next.
-    if (player->skelAnime.jointTable != nullptr && mainPlayer->skelAnime.jointTable != nullptr &&
-        player->skelAnime.dListCount == mainPlayer->skelAnime.dListCount && player->skelAnime.dListCount > 0 &&
-        player->skelAnime.dListCount <= 24) {
-        std::memcpy(player->skelAnime.jointTable, mainPlayer->skelAnime.jointTable,
-                    static_cast<size_t>(player->skelAnime.dListCount) * sizeof(Vec3s));
+    // P2 has no independent item/equip actions yet: Player_UseItem(ITEM_NONE)
+    // initializes the pilot's default model group with empty hands. Use the
+    // corresponding free-arm loops, not the shield/weapon-ready animations.
+    // This depends ONLY on P2 input and never mirrors P1's active animation.
+    // Once P2 equipment exists, choose from the game's anim group/model type.
+    const bool moving = length > 0.17f;
+    LinkAnimationHeader* animation = reinterpret_cast<LinkAnimationHeader*>(
+        const_cast<char*>(moving ? gPlayerAnim_link_normal_run_free : gPlayerAnim_link_normal_wait_free));
+    if (player->skelAnime.animation != animation) {
+        LinkAnimation_Change(play, &player->skelAnime, animation, 1.0f, 0.0f, Animation_GetLastFrame(animation),
+                             ANIMMODE_LOOP, -4.0f);
     }
-    player->upperLimbRot = mainPlayer->upperLimbRot;
+    LinkAnimation_Update(play, &player->skelAnime);
+    player->upperLimbRot = { 0, 0, 0 };
     player->currentTunic = mainPlayer->currentTunic;
     player->currentBoots = mainPlayer->currentBoots;
     player->currentShield = mainPlayer->currentShield;
