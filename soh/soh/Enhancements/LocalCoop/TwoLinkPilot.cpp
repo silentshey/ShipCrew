@@ -28,6 +28,7 @@ void Player_Draw(Actor* actor, PlayState* play);
 // The experimental switch lives in the existing Controls settings screen.
 // Leave disabled by default so the already validated single-player build is unchanged.
 #define SHIPCREW_PILOT_CVAR CVAR_SETTING("ShipCrew.TwoLinkPilot")
+#define SHIPCREW_SPLIT_CVAR CVAR_SETTING("ShipCrew.SplitScreenPilot")
 
 namespace {
 
@@ -51,9 +52,17 @@ constexpr f32 kWallCheckHeight = 50.0f;
 constexpr f32 kWallCheckRadius = 22.0f;
 constexpr f32 kCeilingCheckHeight = 55.0f;
 constexpr f32 kRadiansToN64Angle = 32768.0f / 3.14159265358979323846f;
+constexpr f32 kCameraDistance = 195.0f;
+constexpr f32 kCameraHeight = 43.0f;
+constexpr f32 kCameraFollowFactor = 0.24f;
+constexpr f32 kRightStickDeadzone = 0.17f;
+constexpr f32 kCameraYawSpeed = 0.047f;
+constexpr f32 kCameraPitchSpeed = 0.034f;
 
 bool sSpawningLocalPilot = false;
 bool sSpawnAttempted = false;
+// Render-pass flag used by z_view.c to keep independent interpolation history.
+bool sRenderingSecondCamera = false;
 
 // This runtime belongs to the one experimental P2 actor; never borrow P1's
 // action state or animation tables. When expanded to 4 players, move this
@@ -74,12 +83,62 @@ struct PilotRuntime {
     // item transaction comes from P1, a save edit, or an external sync.
     int lastObservedBombAmmo = -1;
     int lastObservedNutAmmo = -1;
+    bool cameraReady = false;
+    bool splitPreviouslyEnabled = false;
+    f32 cameraYaw = 0.0f;
+    f32 cameraPitch = 0.15f;
+    Vec3f cameraAt = {};
+    Vec3f cameraEye = {};
     PilotItemPose itemPose = PilotItemPose::None;
 };
 PilotRuntime sPilot;
 
 LinkAnimationHeader* Pilot_Animation(const char* asset) {
     return reinterpret_cast<LinkAnimationHeader*>(const_cast<char*>(asset));
+}
+
+// Separate orbit/follow state for P2; it never takes over the engine's
+// GET_ACTIVE_CAM, mainCamera, cutscene camera or P1 controller input.
+// The visual second pass reads these cached vectors after actor updates.
+void Pilot_UpdateCamera(Actor* actor, const Input& input) {
+    if (CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) == 0) {
+        sPilot.splitPreviouslyEnabled = false;
+        return;
+    }
+    if (!sPilot.splitPreviouslyEnabled) {
+        sPilot.cameraYaw = static_cast<f32>(actor->shape.rot.y) / kRadiansToN64Angle;
+        sPilot.cameraPitch = 0.15f;
+        sPilot.cameraReady = false;
+        sPilot.splitPreviouslyEnabled = true;
+    }
+
+    const f32 rightX = static_cast<f32>(input.cur.right_stick_x) / kMaxStickValue;
+    const f32 rightY = static_cast<f32>(input.cur.right_stick_y) / kMaxStickValue;
+    if (std::fabs(rightX) > kRightStickDeadzone) {
+        sPilot.cameraYaw -= rightX * kCameraYawSpeed;
+    }
+    if (std::fabs(rightY) > kRightStickDeadzone) {
+        sPilot.cameraPitch = std::clamp(sPilot.cameraPitch + rightY * kCameraPitchSpeed, -0.35f, 0.9f);
+    }
+
+    Vec3f at = { actor->world.pos.x, actor->world.pos.y + kCameraHeight, actor->world.pos.z };
+    Vec3f eye = {
+        at.x - std::sin(sPilot.cameraYaw) * kCameraDistance * std::cos(sPilot.cameraPitch),
+        at.y + std::sin(sPilot.cameraPitch) * kCameraDistance,
+        at.z - std::cos(sPilot.cameraYaw) * kCameraDistance * std::cos(sPilot.cameraPitch),
+    };
+    if (!sPilot.cameraReady) {
+        sPilot.cameraAt = at;
+        sPilot.cameraEye = eye;
+        sPilot.cameraReady = true;
+    } else {
+        sPilot.cameraAt.x += (at.x - sPilot.cameraAt.x) * kCameraFollowFactor;
+        sPilot.cameraAt.y += (at.y - sPilot.cameraAt.y) * kCameraFollowFactor;
+        sPilot.cameraAt.z += (at.z - sPilot.cameraAt.z) * kCameraFollowFactor;
+        sPilot.cameraEye.x += (eye.x - sPilot.cameraEye.x) * kCameraFollowFactor;
+        sPilot.cameraEye.y += (eye.y - sPilot.cameraEye.y) * kCameraFollowFactor;
+        sPilot.cameraEye.z += (eye.z - sPilot.cameraEye.z) * kCameraFollowFactor;
+    }
 }
 
 // P1 calls Inventory_ChangeAmmo(item, -1), which caps the *result* to the
@@ -257,6 +316,7 @@ void Pilot_Init(Actor* actor, PlayState* play) {
     sPilot.actor = actor;
     sPilot.lastObservedBombAmmo = AMMO(ITEM_BOMB);
     sPilot.lastObservedNutAmmo = AMMO(ITEM_NUT);
+    sPilot.cameraYaw = static_cast<f32>(actor->shape.rot.y) / kRadiansToN64Angle;
     NameTag_RegisterForActorWithOptions(actor, "P2 PILOT", {});
 }
 
@@ -295,6 +355,11 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     const f32 z = static_cast<f32>(pad.stick_y) / kMaxStickValue;
     const f32 inputLength = std::sqrt(x * x + z * z);
     const bool moving = inputLength > 0.17f;
+    // Camera-relative movement is only enabled by the separate opt-in split
+    // camera experiment. Keep proven P2 world-stick behavior when it is off.
+    const bool useOrbit = CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) != 0;
+    const f32 worldX = useOrbit ? x * std::cos(sPilot.cameraYaw) + z * std::sin(sPilot.cameraYaw) : x;
+    const f32 worldZ = useOrbit ? z * std::cos(sPilot.cameraYaw) - x * std::sin(sPilot.cameraYaw) : z;
     const bool wasGrounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
     const bool canAct = !Player_InBlockingCsMode(play, GET_PLAYER(play));
 
@@ -322,7 +387,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             actor->speedXZ = std::max(requestedSpeed, actor->speedXZ - kDeceleration);
         }
         if (canAct && moving) {
-            actor->world.rot.y = static_cast<s16>(std::atan2(x, z) * kRadiansToN64Angle);
+            actor->world.rot.y = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
             actor->shape.rot.y = actor->world.rot.y;
         }
     }
@@ -331,6 +396,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     Actor_MoveXZGravity(actor);
     Actor_UpdateBgCheckInfo(play, actor, kWallCheckHeight, kWallCheckRadius, kCeilingCheckHeight, 0x1D);
     Actor_SetFocus(actor, 40.0f);
+    Pilot_UpdateCamera(actor, play->state.input[1]);
     const bool grounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
     if (!wasGrounded && grounded && fallingBeforeMove) {
         sPilot.landingFrames = kLandingFrames;
@@ -502,3 +568,25 @@ void Pilot_RegisterHooks() {
 static RegisterShipInitFunc sRegisterPilot(Pilot_RegisterHooks);
 
 } // namespace
+
+extern "C" s32 ShipCrewCamera_GetSecondView(PlayState* play, Vec3f* eye, Vec3f* at, Vec3f* up) {
+    if (play == nullptr || eye == nullptr || at == nullptr || up == nullptr ||
+        CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0 || CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) == 0 ||
+        play->activeCamera != CAM_ID_MAIN || play->pauseCtx.state != 0 || play->pauseCtx.debugState != 0 ||
+        play->csCtx.state != CS_STATE_IDLE || R_PAUSE_MENU_MODE != 0 ||
+        !sPilot.cameraReady || FindPilotActor(play) != sPilot.actor) {
+        return false;
+    }
+    *eye = sPilot.cameraEye;
+    *at = sPilot.cameraAt;
+    *up = { 0.0f, 1.0f, 0.0f };
+    return true;
+}
+
+extern "C" void ShipCrewCamera_SetSecondaryPass(s32 active) {
+    sRenderingSecondCamera = active != 0;
+}
+
+extern "C" s32 ShipCrewCamera_IsSecondaryPass(void) {
+    return sRenderingSecondCamera;
+}
