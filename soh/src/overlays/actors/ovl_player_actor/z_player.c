@@ -3924,6 +3924,49 @@ void Player_UpdateZTargeting(Player* this, PlayState* play) {
  * speed cap and floor pitch, see the following desmos graph: https://www.desmos.com/calculator/hri7dcws4c
  */
 
+// ShipCrew: give local players access to the SAME age/equipment animation
+// group table as original Link. Only the caller chooses the action: exposing
+// assets is not equivalent to running Player_UpdateCommon a second time.
+LinkAnimationHeader* ShipCrewPlayer_GetGroupAnimation(Player* player, s32 group) {
+    if (player == NULL || group < 0 || group >= PLAYER_ANIMGROUP_MAX ||
+        player->modelAnimType >= PLAYER_ANIMTYPE_MAX) {
+        return &gPlayerAnim_link_normal_wait_free;
+    }
+    return D_80853914[group][player->modelAnimType];
+}
+
+// Native OoT uses R_RUN_SPEED_LIMIT / 100.0 rather than the pilot's old
+// fixed 4.2 speed. Keep the register value dynamic for speed configurations.
+f32 ShipCrewPlayer_GetRunSpeedLimit(void) {
+    return R_RUN_SPEED_LIMIT / 100.0f;
+}
+
+// Pure input component of the native Player_CalcSpeedAndYawFromControlStick.
+// The P2 pilot can use this without swapping sControlInput, the active camera
+// or the single-player actor. Preserve vanilla's curved speed function, floor
+// pitch penalty and speed cap. P1 continues using its original function.
+f32 ShipCrewPlayer_CalcGroundSpeedTarget(f32 stickMagnitude, f32 speedCap, s16 floorPitch, s32 curved) {
+    f32 target = stickMagnitude;
+    if (target <= 0.0f) {
+        return 0.0f;
+    }
+    if (curved) {
+        target -= 20.0f;
+        if (target < 0.0f) {
+            target = 0.0f;
+        } else {
+            const f32 temp = 1.0f - Math_CosS(target * 450.0f);
+            target = (SQ(temp) * 30.0f) + 7.0f;
+        }
+    } else {
+        target *= 0.8f;
+    }
+    const f32 sinFloorPitch = Math_SinS(floorPitch);
+    const f32 floorInfluence = CLAMP(sinFloorPitch, 0.0f, 0.6f);
+    target = (target * 0.14f) - (8.0f * floorInfluence * floorInfluence);
+    return CLAMP(target, 0.0f, speedCap);
+}
+
 // Linear mode is a straight line, increasing target speed at a steady rate relative to the control stick magnitude
 #define SPEED_MODE_LINEAR 0.0f
 
