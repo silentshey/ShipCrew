@@ -1,7 +1,8 @@
 // Opt-in, deliberately limited first integration test for a second local Link.
-// Independent P2 movement, empty-handed idle/run and experimental world physics.
-// This is not the final multiplayer actor/combat/camera architecture.
+// Experimental single-process P2 movement + shared-inventory item integration.
+// P2 remains a separate NPC-category Link actor, not the global GET_PLAYER.
 
+#include <algorithm>
 #include <cmath>
 
 #include <libultraship/bridge/consolevariablebridge.h>
@@ -16,6 +17,7 @@ extern "C" {
 #include "macros.h"
 #include "variables.h"
 #include "objects/gameplay_keep/gameplay_keep.h"
+#include <overlays/actors/ovl_En_Arrow/z_en_arrow.h>
 
 extern PlayState* gPlayState;
 void Player_UseItem(PlayState* play, Player* player, s32 item);
@@ -29,11 +31,19 @@ void Player_Draw(Actor* actor, PlayState* play);
 namespace {
 
 constexpr f32 kMaxStickValue = 80.0f;
-constexpr f32 kMovementPerFrame = 3.0f;
+constexpr f32 kRunSpeed = 4.2f;
+constexpr f32 kWalkThreshold = 0.57f;
+constexpr f32 kAcceleration = 0.6f;
+constexpr f32 kDeceleration = 0.8f;
+constexpr f32 kRollSpeed = 6.0f;
+constexpr int kRollFrames = 14;
+constexpr int kLandingFrames = 6;
+constexpr int kItemFrames = 11;
+constexpr int kMaxWorldBombs = 3;
+constexpr f32 kItemDropDistance = 27.0f;
 constexpr f32 kSpawnSeparation = 70.0f;
 constexpr f32 kPilotGravity = -1.0f;
 constexpr f32 kPilotTerminalVelocity = -18.0f;
-constexpr f32 kPilotHopVelocity = 8.0f;
 // World collisions only; player/NPC combat and interactions are later milestones.
 constexpr f32 kWallCheckHeight = 50.0f;
 constexpr f32 kWallCheckRadius = 22.0f;
@@ -42,6 +52,59 @@ constexpr f32 kRadiansToN64Angle = 32768.0f / 3.14159265358979323846f;
 
 bool sSpawningLocalPilot = false;
 bool sSpawnAttempted = false;
+
+// This runtime belongs to the one experimental P2 actor; never borrow P1's
+// action state or animation tables. When expanded to 4 players, move this
+// runtime into the common per-player component keyed by local player slot.
+enum class PilotItemPose { None, Bomb, Nut };
+struct PilotRuntime {
+    Actor* actor = nullptr;
+    int rollFrames = 0;
+    int landingFrames = 0;
+    int itemFrames = 0;
+    PilotItemPose itemPose = PilotItemPose::None;
+};
+PilotRuntime sPilot;
+
+LinkAnimationHeader* Pilot_Animation(const char* asset) {
+    return reinterpret_cast<LinkAnimationHeader*>(const_cast<char*>(asset));
+}
+
+// Item actors are the normal game actors, so they affect the same world.
+// Only consume the shared save's ammo AFTER the actor actually spawned.
+void Pilot_UseBomb(Actor* actor, PlayState* play) {
+    if (AMMO(ITEM_BOMB) <= 0 || (play->actorCtx.actorLists[ACTORCAT_EXPLOSIVE].length >= kMaxWorldBombs &&
+                                 CVarGetInteger(CVAR_ENHANCEMENT("RemoveExplosiveLimit"), 0) == 0)) {
+        Sfx_PlaySfxCentered(NA_SE_SY_ERROR);
+        return;
+    }
+    const f32 radians = static_cast<f32>(actor->shape.rot.y) / kRadiansToN64Angle;
+    Actor* bomb = Actor_Spawn(&play->actorCtx, play, ACTOR_EN_BOM,
+                              actor->world.pos.x + std::sin(radians) * kItemDropDistance, actor->world.pos.y + 7.0f,
+                              actor->world.pos.z + std::cos(radians) * kItemDropDistance, 0, actor->shape.rot.y, 0, 0);
+    if (bomb != nullptr) {
+        Inventory_ChangeAmmo(ITEM_BOMB, -1);
+        sPilot.itemPose = PilotItemPose::Bomb;
+        sPilot.itemFrames = kItemFrames;
+    }
+}
+
+void Pilot_UseNut(Actor* actor, PlayState* play) {
+    if (AMMO(ITEM_NUT) <= 0) {
+        Sfx_PlaySfxCentered(NA_SE_SY_ERROR);
+        return;
+    }
+    const f32 radians = static_cast<f32>(actor->shape.rot.y) / kRadiansToN64Angle;
+    Actor* nut =
+        Actor_Spawn(&play->actorCtx, play, ACTOR_EN_ARROW, actor->world.pos.x + std::sin(radians) * kItemDropDistance,
+                    actor->world.pos.y + 35.0f, actor->world.pos.z + std::cos(radians) * kItemDropDistance, 0x1000,
+                    actor->shape.rot.y, 0, ARROW_NUT);
+    if (nut != nullptr) {
+        Inventory_ChangeAmmo(ITEM_NUT, -1);
+        sPilot.itemPose = PilotItemPose::Nut;
+        sPilot.itemFrames = kItemFrames;
+    }
+}
 
 void Pilot_Init(Actor* actor, PlayState* play) {
     auto* player = reinterpret_cast<Player*>(actor);
@@ -69,60 +132,118 @@ void Pilot_Init(Actor* actor, PlayState* play) {
     actor->gravity = kPilotGravity;
     actor->minVelocityY = kPilotTerminalVelocity;
 
+    sPilot = {};
+    sPilot.actor = actor;
     NameTag_RegisterForActorWithOptions(actor, "P2 PILOT", {});
 }
 
 void Pilot_Update(Actor* actor, PlayState* play) {
     Player* player = reinterpret_cast<Player*>(actor);
-    Player* mainPlayer = GET_PLAYER(play);
-    if (mainPlayer == nullptr || player == mainPlayer) {
+    if (GET_PLAYER(play) == nullptr || GET_PLAYER(play) == player) {
         return;
     }
+    if (sPilot.actor != actor) {
+        sPilot = {};
+        sPilot.actor = actor;
+    }
 
-    // The existing input deck already reads up to four independent N64 ports.
-    // IMPORTANT: never swap input[0] or GET_PLAYER to impersonate P2: that would
-    // corrupt P1's actions and hide the real multi-player architecture work.
+    // Player 2 reads only port 2. Never redirect GET_PLAYER or input[0]:
+    // the save, scene, game clock and inventory remain intentionally shared.
     const auto& pad = play->state.input[1].cur;
+    const auto pressed = play->state.input[1].press.button;
     const f32 x = static_cast<f32>(pad.stick_x) / kMaxStickValue;
     const f32 z = static_cast<f32>(pad.stick_y) / kMaxStickValue;
-    const f32 length = std::sqrt(x * x + z * z);
-    const bool moving = length > 0.17f;
-    // Use the engine's actor movement so its background collision receives
-    // correct previous/current positions, instead of directly teleporting X/Z.
-    actor->speedXZ = moving ? kMovementPerFrame * (length > 1.0f ? 1.0f : length) : 0.0f;
-    if (moving) {
-        actor->world.rot.y = static_cast<s16>(std::atan2(x, z) * kRadiansToN64Angle);
-        actor->shape.rot.y = actor->world.rot.y;
+    const f32 inputLength = std::sqrt(x * x + z * z);
+    const bool moving = inputLength > 0.17f;
+    const bool wasGrounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
+    const bool canAct = !Player_InBlockingCsMode(play, GET_PLAYER(play));
+
+    if (canAct && (pressed & BTN_B) && wasGrounded && moving && sPilot.rollFrames == 0 && sPilot.itemFrames == 0) {
+        sPilot.rollFrames = kRollFrames;
+        sPilot.landingFrames = 0;
     }
 
-    // This A-button hop only probes independent input, gravity and floor
-    // landing. It is NOT the game's eventual ledge auto-jump system.
-    if ((play->state.input[1].press.button & BTN_A) && (actor->bgCheckFlags & BGCHECKFLAG_GROUND)) {
-        actor->velocity.y = kPilotHopVelocity;
-        actor->bgCheckFlags &= ~BGCHECKFLAG_GROUND;
+    // Smooth analog acceleration allows walking, full-speed running and
+    // deceleration; a roll commits to its original facing and short burst.
+    const f32 requestedSpeed = canAct && moving ? kRunSpeed * std::min(inputLength, 1.0f) : 0.0f;
+    if (sPilot.rollFrames > 0) {
+        actor->speedXZ = kRollSpeed;
+    } else {
+        if (requestedSpeed > actor->speedXZ) {
+            actor->speedXZ = std::min(requestedSpeed, actor->speedXZ + kAcceleration);
+        } else {
+            actor->speedXZ = std::max(requestedSpeed, actor->speedXZ - kDeceleration);
+        }
+        if (canAct && moving) {
+            actor->world.rot.y = static_cast<s16>(std::atan2(x, z) * kRadiansToN64Angle);
+            actor->shape.rot.y = actor->world.rot.y;
+        }
     }
+
+    const bool fallingBeforeMove = actor->velocity.y < -1.0f;
     Actor_MoveXZGravity(actor);
-    // Regular engine checks: resolve world walls, ceilings and floor contact.
-    // Actor-vs-actor interaction and specialized Link ledge physics are separate.
     Actor_UpdateBgCheckInfo(play, actor, kWallCheckHeight, kWallCheckRadius, kCeilingCheckHeight, 0x1D);
     Actor_SetFocus(actor, 40.0f);
+    const bool grounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
+    if (!wasGrounded && grounded && fallingBeforeMove) {
+        sPilot.landingFrames = kLandingFrames;
+    }
 
-    // P2 has no independent item/equip actions yet: Player_UseItem(ITEM_NONE)
-    // initializes the pilot's default model group with empty hands. Use the
-    // corresponding free-arm loops, not the shield/weapon-ready animations.
-    // This depends ONLY on P2 input and never mirrors P1's active animation.
-    // Once P2 equipment exists, choose from the game's anim group/model type.
-    LinkAnimationHeader* animation = reinterpret_cast<LinkAnimationHeader*>(
-        const_cast<char*>(moving ? gPlayerAnim_link_normal_run_free : gPlayerAnim_link_normal_wait_free));
+    // Pilot items are inventory-gated and intentionally use already existing
+    // bomb / nut actors. P2 has no full equipment or item action system yet.
+    if (canAct && grounded && sPilot.rollFrames == 0 && sPilot.itemFrames == 0) {
+        if (pressed & BTN_CLEFT) {
+            Pilot_UseBomb(actor, play);
+        } else if (pressed & BTN_CRIGHT) {
+            Pilot_UseNut(actor, play);
+        }
+    }
+
+    // Keep P2's previously verified empty-handed stance. Airborne animations
+    // play only when falling from terrain, not from an artificial A-button hop.
+    // A separate skelAnime belongs to this actor.
+    LinkAnimationHeader* animation = nullptr;
+    u8 mode = ANIMMODE_LOOP;
+    if (sPilot.rollFrames > 0 && grounded) {
+        animation = Pilot_Animation(gPlayerAnim_link_normal_landing_roll_free);
+        mode = ANIMMODE_ONCE;
+    } else if (!grounded) {
+        animation = Pilot_Animation(gPlayerAnim_link_normal_jump);
+        sPilot.landingFrames = 0;
+    } else if (sPilot.itemFrames > 0) {
+        animation = Pilot_Animation(sPilot.itemPose == PilotItemPose::Bomb ? gPlayerAnim_link_normal_put_free
+                                                                           : gPlayerAnim_link_normal_light_bom);
+        mode = ANIMMODE_ONCE;
+    } else if (sPilot.landingFrames > 0) {
+        animation = Pilot_Animation(gPlayerAnim_link_normal_short_landing_free);
+        mode = ANIMMODE_ONCE;
+    } else if (!moving) {
+        animation = Pilot_Animation(gPlayerAnim_link_normal_wait_free);
+    } else if (inputLength <= kWalkThreshold) {
+        animation = Pilot_Animation(gPlayerAnim_link_normal_walk_free);
+    } else {
+        animation = Pilot_Animation(gPlayerAnim_link_normal_run_free);
+    }
+
     if (player->skelAnime.animation != animation) {
-        LinkAnimation_Change(play, &player->skelAnime, animation, 1.0f, 0.0f, Animation_GetLastFrame(animation),
-                             ANIMMODE_LOOP, -4.0f);
+        LinkAnimation_Change(play, &player->skelAnime, animation, 1.0f, 0.0f, Animation_GetLastFrame(animation), mode,
+                             -3.0f);
     }
     LinkAnimation_Update(play, &player->skelAnime);
+
+    if (sPilot.rollFrames > 0) {
+        --sPilot.rollFrames;
+    }
+    if (sPilot.landingFrames > 0) {
+        --sPilot.landingFrames;
+    }
+    if (sPilot.itemFrames > 0) {
+        --sPilot.itemFrames;
+    }
     player->upperLimbRot = { 0, 0, 0 };
-    player->currentTunic = mainPlayer->currentTunic;
-    player->currentBoots = mainPlayer->currentBoots;
-    player->currentShield = mainPlayer->currentShield;
+    player->currentTunic = GET_PLAYER(play)->currentTunic;
+    player->currentBoots = GET_PLAYER(play)->currentBoots;
+    player->currentShield = GET_PLAYER(play)->currentShield;
 }
 
 void Pilot_Draw(Actor* actor, PlayState* play) {
@@ -131,6 +252,9 @@ void Pilot_Draw(Actor* actor, PlayState* play) {
 
 void Pilot_Destroy(Actor* actor, PlayState* play) {
     NameTag_RemoveAllForActor(actor);
+    if (sPilot.actor == actor) {
+        sPilot = {};
+    }
     // The actor originated as ACTOR_PLAYER, just as in Anchor's dummy path.
     // Restore the ID so ActorDB decrements the correct loaded actor count.
     actor->id = ACTOR_PLAYER;
