@@ -39,6 +39,7 @@ constexpr f32 kRollSpeed = 6.0f;
 constexpr int kRollFrames = 14;
 constexpr int kLandingFrames = 6;
 constexpr int kItemFrames = 11;
+constexpr int kItemDebounceFrames = 12;
 constexpr int kMaxWorldBombs = 3;
 constexpr f32 kItemDropDistance = 27.0f;
 constexpr f32 kSpawnSeparation = 70.0f;
@@ -56,9 +57,15 @@ bool sSpawnAttempted = false;
 // This runtime belongs to the one experimental P2 actor; never borrow P1's
 // action state or animation tables. When expanded to 4 players, move this
 // runtime into the common per-player component keyed by local player slot.
-enum class PilotItemPose { None, Bomb, Nut };
+enum class PilotItemPose { None, BombPickup, BombThrow, Nut };
 struct PilotRuntime {
     Actor* actor = nullptr;
+    Actor* heldBomb = nullptr;
+    // Derive rising edges from port 2's current buttons. Some controller
+    // mappings can repeatedly report press bits while a button is held;
+    // a button must become fully released before another item action.
+    u32 previousButtons = 0;
+    int itemDebounceFrames = 0;
     int rollFrames = 0;
     int landingFrames = 0;
     int itemFrames = 0;
@@ -70,27 +77,98 @@ LinkAnimationHeader* Pilot_Animation(const char* asset) {
     return reinterpret_cast<LinkAnimationHeader*>(const_cast<char*>(asset));
 }
 
-// Item actors are the normal game actors, so they affect the same world.
-// Only consume the shared save's ammo AFTER the actor actually spawned.
+// Do not dereference a bomb pointer until the actual explosive list confirms
+// the actor still exists. A held bomb can naturally explode, leave the room,
+// or be removed while the pilot is disabled.
+Actor* Pilot_FindHeldBomb(Actor* pilot, PlayState* play) {
+    if (sPilot.heldBomb == nullptr) {
+        return nullptr;
+    }
+    for (Actor* candidate = play->actorCtx.actorLists[ACTORCAT_EXPLOSIVE].head; candidate != nullptr;
+         candidate = candidate->next) {
+        if (candidate != sPilot.heldBomb) {
+            continue;
+        }
+        if (candidate->update != nullptr && candidate->parent == pilot && candidate->params == 0) {
+            return candidate;
+        }
+        if (candidate->parent == pilot) {
+            candidate->parent = nullptr;
+        }
+        break;
+    }
+    if (pilot->child == sPilot.heldBomb) {
+        pilot->child = nullptr;
+    }
+    sPilot.heldBomb = nullptr;
+    return nullptr;
+}
+
+// First item press picks up exactly one real bomb, just like P1. The vanilla
+// bomb actor retains its fuse/explosion/collision behavior while P2 positions
+// the carried instance. The next independent A press places or throws it.
 void Pilot_UseBomb(Actor* actor, PlayState* play) {
-    if (AMMO(ITEM_BOMB) <= 0 || (play->actorCtx.actorLists[ACTORCAT_EXPLOSIVE].length >= kMaxWorldBombs &&
-                                 CVarGetInteger(CVAR_ENHANCEMENT("RemoveExplosiveLimit"), 0) == 0)) {
+    if (sPilot.heldBomb != nullptr || AMMO(ITEM_BOMB) <= 0 ||
+        (play->actorCtx.actorLists[ACTORCAT_EXPLOSIVE].length >= kMaxWorldBombs &&
+         CVarGetInteger(CVAR_ENHANCEMENT("RemoveExplosiveLimit"), 0) == 0)) {
         Sfx_PlaySfxCentered(NA_SE_SY_ERROR);
         return;
     }
     const f32 radians = static_cast<f32>(actor->shape.rot.y) / kRadiansToN64Angle;
-    Actor* bomb = Actor_Spawn(&play->actorCtx, play, ACTOR_EN_BOM,
-                              actor->world.pos.x + std::sin(radians) * kItemDropDistance, actor->world.pos.y + 7.0f,
-                              actor->world.pos.z + std::cos(radians) * kItemDropDistance, 0, actor->shape.rot.y, 0, 0);
-    if (bomb != nullptr) {
-        Inventory_ChangeAmmo(ITEM_BOMB, -1);
-        sPilot.itemPose = PilotItemPose::Bomb;
-        sPilot.itemFrames = kItemFrames;
+    Actor* bomb = Actor_SpawnAsChild(&play->actorCtx, actor, play, ACTOR_EN_BOM,
+                                    actor->world.pos.x + std::sin(radians) * 10.0f, actor->world.pos.y + 48.0f,
+                                    actor->world.pos.z + std::cos(radians) * 10.0f, 0, actor->shape.rot.y, 0, 0);
+    if (bomb == nullptr) {
+        return; // No actor, no ammo cost.
     }
+    if (bomb->parent != actor) {
+        // Another game hook prevented attachment. Avoid charging ammo or
+        // accidentally placing an uncontrolled bomb in P2's hands.
+        Actor_Kill(bomb);
+        return;
+    }
+    bomb->room = -1;
+    sPilot.heldBomb = bomb;
+    Inventory_ChangeAmmo(ITEM_BOMB, -1);
+    sPilot.itemPose = PilotItemPose::BombPickup;
+    sPilot.itemFrames = kItemFrames;
+    sPilot.itemDebounceFrames = kItemDebounceFrames;
 }
 
+void Pilot_PositionHeldBomb(Actor* pilot, Actor* bomb) {
+    const f32 facing = static_cast<f32>(pilot->shape.rot.y) / kRadiansToN64Angle;
+    bomb->world.pos.x = pilot->world.pos.x + std::sin(facing) * 10.0f;
+    bomb->world.pos.y = pilot->world.pos.y + 48.0f;
+    bomb->world.pos.z = pilot->world.pos.z + std::cos(facing) * 10.0f;
+    bomb->world.rot.y = pilot->shape.rot.y;
+    bomb->shape.rot.y = pilot->shape.rot.y;
+    bomb->speedXZ = 0.0f;
+    bomb->velocity.y = 0.0f;
+}
+
+void Pilot_ReleaseBomb(Actor* pilot, Actor* bomb, bool throwForward) {
+    const f32 facing = static_cast<f32>(pilot->shape.rot.y) / kRadiansToN64Angle;
+    bomb->parent = nullptr;
+    if (pilot->child == bomb) {
+        pilot->child = nullptr;
+    }
+    sPilot.heldBomb = nullptr;
+    const f32 offset = throwForward ? kItemDropDistance : 16.0f;
+    bomb->world.pos.x = pilot->world.pos.x + std::sin(facing) * offset;
+    bomb->world.pos.y = pilot->world.pos.y + (throwForward ? 31.0f : 9.0f);
+    bomb->world.pos.z = pilot->world.pos.z + std::cos(facing) * offset;
+    bomb->world.rot.y = pilot->shape.rot.y;
+    bomb->speedXZ = throwForward ? 8.0f : 0.0f;
+    bomb->velocity.y = throwForward ? 4.0f : 0.0f;
+    sPilot.itemPose = PilotItemPose::BombThrow;
+    sPilot.itemFrames = kItemFrames;
+    sPilot.itemDebounceFrames = kItemDebounceFrames;
+}
+
+// Deku Nuts have no holding phase in OoT. Trigger once per genuine button
+// down and only deduct the shared inventory if the nut actor actually spawns.
 void Pilot_UseNut(Actor* actor, PlayState* play) {
-    if (AMMO(ITEM_NUT) <= 0) {
+    if (sPilot.heldBomb != nullptr || AMMO(ITEM_NUT) <= 0) {
         Sfx_PlaySfxCentered(NA_SE_SY_ERROR);
         return;
     }
@@ -103,6 +181,7 @@ void Pilot_UseNut(Actor* actor, PlayState* play) {
         Inventory_ChangeAmmo(ITEM_NUT, -1);
         sPilot.itemPose = PilotItemPose::Nut;
         sPilot.itemFrames = kItemFrames;
+        sPilot.itemDebounceFrames = kItemDebounceFrames;
     }
 }
 
@@ -150,7 +229,12 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     // Player 2 reads only port 2. Never redirect GET_PLAYER or input[0]:
     // the save, scene, game clock and inventory remain intentionally shared.
     const auto& pad = play->state.input[1].cur;
-    const auto pressed = play->state.input[1].press.button;
+    const u32 buttons = pad.button;
+    const u32 pressed = buttons & ~sPilot.previousButtons;
+    sPilot.previousButtons = buttons;
+    if (sPilot.itemDebounceFrames > 0) {
+        --sPilot.itemDebounceFrames;
+    }
     const f32 x = static_cast<f32>(pad.stick_x) / kMaxStickValue;
     const f32 z = static_cast<f32>(pad.stick_y) / kMaxStickValue;
     const f32 inputLength = std::sqrt(x * x + z * z);
@@ -158,9 +242,14 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     const bool wasGrounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
     const bool canAct = !Player_InBlockingCsMode(play, GET_PLAYER(play));
 
-    // OoT-style action button: A rolls while running. No manual jump.
-    // Sword combat will eventually use B; this pilot does not yet implement it.
-    if (canAct && (pressed & BTN_A) && wasGrounded && moving && sPilot.rollFrames == 0 && sPilot.itemFrames == 0) {
+    Actor* heldBomb = Pilot_FindHeldBomb(actor, play);
+    // The original action button releases a carried bomb first. Otherwise A
+    // rolls while running; there is no manual A-button jump.
+    if (canAct && (pressed & BTN_A) && heldBomb != nullptr && sPilot.itemDebounceFrames == 0) {
+        Pilot_ReleaseBomb(actor, heldBomb, moving);
+        heldBomb = nullptr;
+    } else if (canAct && (pressed & BTN_A) && heldBomb == nullptr && wasGrounded && moving &&
+               sPilot.rollFrames == 0 && sPilot.itemFrames == 0) {
         sPilot.rollFrames = kRollFrames;
         sPilot.landingFrames = 0;
     }
@@ -191,9 +280,17 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         sPilot.landingFrames = kLandingFrames;
     }
 
-    // Pilot items are inventory-gated and intentionally use already existing
-    // bomb / nut actors. P2 has no full equipment or item action system yet.
-    if (canAct && grounded && sPilot.rollFrames == 0 && sPilot.itemFrames == 0) {
+    // Keep the live bomb attached to P2's position until A releases it.
+    // Check the actor list before touching the pointer; the fuse still runs.
+    heldBomb = Pilot_FindHeldBomb(actor, play);
+    if (heldBomb != nullptr) {
+        Pilot_PositionHeldBomb(actor, heldBomb);
+    }
+
+    // Genuine button-down edges plus a minimum cooldown prevent held-button
+    // repeats from draining the entire shared save inventory.
+    if (canAct && grounded && heldBomb == nullptr && sPilot.rollFrames == 0 && sPilot.itemFrames == 0 &&
+        sPilot.itemDebounceFrames == 0) {
         if (pressed & BTN_CLEFT) {
             Pilot_UseBomb(actor, play);
         } else if (pressed & BTN_CRIGHT) {
@@ -213,9 +310,21 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         animation = Pilot_Animation(gPlayerAnim_link_normal_jump);
         sPilot.landingFrames = 0;
     } else if (sPilot.itemFrames > 0) {
-        animation = Pilot_Animation(sPilot.itemPose == PilotItemPose::Bomb ? gPlayerAnim_link_normal_put_free
-                                                                           : gPlayerAnim_link_normal_light_bom);
+        switch (sPilot.itemPose) {
+            case PilotItemPose::BombPickup:
+                animation = Pilot_Animation(gPlayerAnim_link_normal_free2bom);
+                break;
+            case PilotItemPose::BombThrow:
+                animation = Pilot_Animation(gPlayerAnim_link_normal_throw_free);
+                break;
+            default:
+                animation = Pilot_Animation(gPlayerAnim_link_normal_light_bom);
+                break;
+        }
         mode = ANIMMODE_ONCE;
+    } else if (heldBomb != nullptr) {
+        animation = Pilot_Animation(moving ? gPlayerAnim_link_normal_carryB
+                                            : gPlayerAnim_link_normal_carryB_wait);
     } else if (sPilot.landingFrames > 0) {
         animation = Pilot_Animation(gPlayerAnim_link_normal_short_landing_free);
         mode = ANIMMODE_ONCE;
@@ -255,6 +364,13 @@ void Pilot_Draw(Actor* actor, PlayState* play) {
 void Pilot_Destroy(Actor* actor, PlayState* play) {
     NameTag_RemoveAllForActor(actor);
     if (sPilot.actor == actor) {
+        // A carried bomb must be freed before its P2 parent is destroyed.
+        // Leave the live bomb in the shared world rather than leaking a
+        // pointer into an actor that no longer exists.
+        Actor* bomb = Pilot_FindHeldBomb(actor, play);
+        if (bomb != nullptr) {
+            Pilot_ReleaseBomb(actor, bomb, false);
+        }
         sPilot = {};
     }
     // The actor originated as ACTOR_PLAYER, just as in Anchor's dummy path.
