@@ -40,6 +40,12 @@ s32 Camera_UpdateWater(Camera* camera);
 #include "z_camera_data.inc"
 #include <libultraship/bridge/consolevariablebridge.h>
 
+// ShipCrew's independent local P2 camera only runs the stock camera solver,
+// not a second gameplay/cutscene pass or a duplicate copy of HUD settings.
+Player* ShipCrewCamera_GetNativeSecondPlayer(PlayState* play);
+void ShipCrewCamera_SetNativeSecondView(PlayState* play, const Vec3f* eye, const Vec3f* at, const Vec3f* up, f32 fov);
+static s32 sShipCrewUpdatingNativeSecondCamera = false;
+
 /*===============================================================*/
 
 /**
@@ -1559,7 +1565,7 @@ s32 Camera_Free(Camera* camera) {
 }
 
 s32 Camera_Normal1(Camera* camera) {
-    if (CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
+    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
         Camera_Free(camera);
         return 1;
     }
@@ -1805,7 +1811,7 @@ s32 Camera_Normal1(Camera* camera) {
 }
 
 s32 Camera_Normal2(Camera* camera) {
-    if (CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
+    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
         Camera_Free(camera);
         return 1;
     }
@@ -1976,7 +1982,7 @@ s32 Camera_Normal2(Camera* camera) {
 
 // riding epona
 s32 Camera_Normal3(Camera* camera) {
-    if (CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
+    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
         Camera_Free(camera);
         return 1;
     }
@@ -2340,7 +2346,7 @@ s32 Camera_Parallel0(Camera* camera) {
  * Generic jump, jumping off ledges
  */
 s32 Camera_Jump1(Camera* camera) {
-    if (CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
+    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
         Camera_Free(camera);
         return 1;
     }
@@ -2490,7 +2496,7 @@ s32 Camera_Jump1(Camera* camera) {
 
 // Climbing ladders/vines
 s32 Camera_Jump2(Camera* camera) {
-    if (CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
+    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
         Camera_Free(camera);
         return 1;
     }
@@ -2677,7 +2683,7 @@ s32 Camera_Jump2(Camera* camera) {
 
 // swimming
 s32 Camera_Jump3(Camera* camera) {
-    if (CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
+    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
         Camera_Free(camera);
         return 1;
     }
@@ -3139,7 +3145,7 @@ s32 Camera_Battle3(Camera* camera) {
  * setting value.
  */
 s32 Camera_Battle4(Camera* camera) {
-    if (CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
+    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
         Camera_Free(camera);
         return 1;
     }
@@ -4674,7 +4680,7 @@ s32 Camera_Data4(Camera* camera) {
  * Hanging off of a ledge
  */
 s32 Camera_Unique1(Camera* camera) {
-    if (CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
+    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
         Camera_Free(camera);
         return 1;
     }
@@ -7066,7 +7072,7 @@ void Camera_Init(Camera* camera, View* view, CollisionContext* colCtx, PlayState
 }
 
 void func_80057FC4(Camera* camera) {
-    if (camera != &camera->play->mainCamera) {
+    if (camera != &camera->play->mainCamera && !sShipCrewUpdatingNativeSecondCamera) {
         camera->prevSetting = camera->setting = CAM_SET_FREE0;
         camera->unk_14C &= ~0x4;
     } else if (camera->play->roomCtx.curRoom.meshHeader->base.type != 1) {
@@ -7156,10 +7162,12 @@ void Camera_InitPlayerSettings(Camera* camera, Player* player) {
     camera->nextCamDataIdx = -1;
     camera->atLERPStepScale = 1.0f;
     Camera_CopyDataToRegs(camera, camera->mode);
-    Camera_QRegInit();
+    if (!sShipCrewUpdatingNativeSecondCamera) {
+        Camera_QRegInit();
+    }
     osSyncPrintf(VT_FGCOL(BLUE) "camera: personalize ---" VT_RST "\n");
 
-    if (camera->thisIdx == CAM_ID_MAIN) {
+    if (camera->thisIdx == CAM_ID_MAIN && !sShipCrewUpdatingNativeSecondCamera) {
         Camera_UpdateWater(camera);
     }
 }
@@ -7528,7 +7536,7 @@ Vec3s Camera_Update(Camera* camera) {
     QuakeCamCalc quake;
     Player* player;
 
-    player = camera->play->cameraPtrs[CAM_ID_MAIN]->player;
+    player = sShipCrewUpdatingNativeSecondCamera ? camera->player : camera->play->cameraPtrs[CAM_ID_MAIN]->player;
 
     if (R_DBG_CAM_UPDATE) {
         osSyncPrintf("camera: in %x\n", camera);
@@ -7575,7 +7583,7 @@ Vec3s Camera_Update(Camera* camera) {
         camera->playerPosRot = curPlayerPosRot;
 
         if (sOOBTimer < 200) {
-            if (camera->status == CAM_STAT_ACTIVE) {
+            if (camera->status == CAM_STAT_ACTIVE && !sShipCrewUpdatingNativeSecondCamera) {
                 Camera_UpdateWater(camera);
                 Camera_UpdateHotRoom(camera);
             }
@@ -7604,8 +7612,10 @@ Vec3s Camera_Update(Camera* camera) {
             }
         }
     }
-    Camera_PrintSettings(camera);
-    Camera_DbgChangeMode(camera);
+    if (!sShipCrewUpdatingNativeSecondCamera) {
+        Camera_PrintSettings(camera);
+        Camera_DbgChangeMode(camera);
+    }
 
     if (camera->status == CAM_STAT_WAIT) {
         if (R_DBG_CAM_UPDATE) {
@@ -7630,7 +7640,7 @@ Vec3s Camera_Update(Camera* camera) {
         Camera_CalcAtDefault(camera, &eyeAtAngle, 0.0f, 0);
     }
 
-    if (camera->status == CAM_STAT_ACTIVE) {
+    if (camera->status == CAM_STAT_ACTIVE && !sShipCrewUpdatingNativeSecondCamera) {
         if ((gSaveContext.gameMode != GAMEMODE_NORMAL) && (gSaveContext.gameMode != GAMEMODE_END_CREDITS)) {
             sCameraInterfaceFlags = 0;
             Camera_UpdateInterface(sCameraInterfaceFlags);
@@ -7672,7 +7682,7 @@ Vec3s Camera_Update(Camera* camera) {
     }
 
     // Debug cam update
-    if (gDbgCamEnabled) {
+    if (gDbgCamEnabled && !sShipCrewUpdatingNativeSecondCamera) {
         camera->play->view.fovy = D_8015BD80.fov;
         DbCamera_Update(&D_8015BD80, camera);
         func_800AA358(&camera->play->view, &D_8015BD80.eye, &D_8015BD80.at, &D_8015BD80.unk_1C);
@@ -7718,7 +7728,9 @@ Vec3s Camera_Update(Camera* camera) {
 
     camera->skyboxOffset = quake.eyeOffset;
 
-    Camera_UpdateDistortion(camera);
+    if (!sShipCrewUpdatingNativeSecondCamera) {
+        Camera_UpdateDistortion(camera);
+    }
 
     if ((camera->play->sceneNum == SCENE_HYRULE_FIELD) && (camera->fov < 59.0f)) {
         View_SetScale(&camera->play->view, 0.79f);
@@ -7766,6 +7778,93 @@ Vec3s Camera_Update(Camera* camera) {
 /**
  * When the camera's timer is 0, change the camera to its parent
  */
+/*
+ * ShipCrew: run the REAL OoT camera solver a second time for an independent
+ * Link, retaining a separate Camera animation/obstruction state.
+ *
+ * Never register this Camera in play->cameraPtrs: these slots are reserved
+ * for P1's ordinary gameplay/cutscene subcameras. Save and restore the
+ * shared play->view, camera global flags and PREGs since the original camera
+ * architecture was written for one player. Player 2 doesn't own the HUD,
+ * environment updates, FreeLook mouse/right-stick or cutscene cameras yet.
+ */
+void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
+    static Camera p2Camera;
+    static PlayState* p2Play = NULL;
+    static Player* p2Player = NULL;
+    Player* player;
+    View originalView;
+    s32 originalOOBTimer;
+    s16 originalInterfaceFlags;
+    s32 originalUpdateDirection;
+    s16 oldPRegs[REG_PER_GROUP];
+    s32 i;
+
+    if (play == NULL || gDbgCamEnabled) {
+        p2Play = NULL;
+        p2Player = NULL;
+        return;
+    }
+    player = ShipCrewCamera_GetNativeSecondPlayer(play);
+    if (player == NULL || play->cameraPtrs[CAM_ID_MAIN] == NULL ||
+        play->mainCamera.status != CAM_STAT_ACTIVE) {
+        p2Play = NULL;
+        p2Player = NULL;
+        return;
+    }
+
+    originalView = play->view;
+    originalOOBTimer = sOOBTimer;
+    originalInterfaceFlags = sCameraInterfaceFlags;
+    originalUpdateDirection = sUpdateCameraDirection;
+    for (i = 0; i < REG_PER_GROUP; ++i) {
+        oldPRegs[i] = PREG(i);
+    }
+    sShipCrewUpdatingNativeSecondCamera = true;
+
+    if (p2Play != play || p2Player != player) {
+        // Copy P1's already-constructed camera configuration/age-dependent
+        // defaults, then initialize the independent P2 camera against its
+        // own character. The normal game room-setting routine is deliberately
+        // allowed for this one secondary camera, not for cutscene subcameras.
+        p2Camera = play->mainCamera;
+        p2Camera.play = play;
+        p2Camera.player = player;
+        p2Camera.target = NULL;
+        p2Camera.thisIdx = CAM_ID_MAIN;
+        p2Camera.status = CAM_STAT_ACTIVE;
+        p2Camera.mode = CAM_MODE_NORMAL;
+        p2Camera.timer = -1;
+        p2Camera.childCamIdx = SUBCAM_FREE;
+        p2Camera.parentCamIdx = SUBCAM_FREE;
+        p2Camera.animState = 0;
+        Camera_InitPlayerSettings(&p2Camera, player);
+        p2Camera.status = CAM_STAT_ACTIVE;
+        p2Camera.thisIdx = CAM_ID_MAIN;
+        sOOBTimer = 0;
+        p2Play = play;
+        p2Player = player;
+    }
+
+    // Reuse ordinary camera settings when P1 moves between 3D room types.
+    // Cutscene/scripted settings still belong to P1; the secondary camera
+    // stays in the independently initialized normal/dungeon room setting.
+    Camera_Update(&p2Camera);
+
+    // Camera_Update writes the rendered eye/at/up/fov into play->view.
+    // Capture that output BEFORE restoring P1's global renderer state.
+    ShipCrewCamera_SetNativeSecondView(play, &play->view.eye, &play->view.lookAt, &play->view.up, play->view.fovy);
+
+    play->view = originalView;
+    sOOBTimer = originalOOBTimer;
+    sCameraInterfaceFlags = originalInterfaceFlags;
+    sUpdateCameraDirection = originalUpdateDirection;
+    for (i = 0; i < REG_PER_GROUP; ++i) {
+        PREG(i) = oldPRegs[i];
+    }
+    sShipCrewUpdatingNativeSecondCamera = false;
+}
+
 void Camera_Finish(Camera* camera) {
     Camera* mainCam = camera->play->cameraPtrs[CAM_ID_MAIN];
     Player* player = GET_PLAYER(camera->play);
@@ -7933,7 +8032,7 @@ s32 Camera_RequestModeImpl(Camera* camera, s16 requestedMode, u8 forceModeChange
         }
 
         // Clear free look if an action is performed that would move the camera (targeting, first person, talking)
-        if (CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1 &&
+        if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1 &&
             ((requestedMode >= CAM_MODE_TARGET && requestedMode <= CAM_MODE_BATTLE) ||
              (requestedMode >= CAM_MODE_FIRST_PERSON && requestedMode <= CAM_MODE_CLIMBZ) ||
              requestedMode == CAM_MODE_HANGZ || requestedMode == CAM_MODE_FOLLOWBOOMERANG)) {
