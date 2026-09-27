@@ -575,16 +575,27 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         }
     }
 
-    // Keep P2's previously verified empty-handed stance. Airborne animations
-    // play only when falling from terrain, not from an artificial A-button hop.
-    // A separate skelAnime belongs to this actor.
+    // Independent P2 skeleton, borrowing ORIGINAL P1 animation assets by
+    // group and P2's own modelAnimType (equipment stance). Never read P1's
+    // animation time or pose: both Links can locomote independently.
     LinkAnimationHeader* animation = nullptr;
     u8 mode = ANIMMODE_LOOP;
+    bool locomotionLoop = false;
+    const f32 nativeInputSpeed = nativeMovement && moving
+                                     ? ShipCrewPlayer_CalcGroundSpeedTarget(
+                                           80.0f * std::min(inputLength, 1.0f), player->unk_880,
+                                           player->floorPitch, sPilot.lockedTarget == nullptr &&
+                                                                   !sPilot.parallelTargeting)
+                                     : 0.0f;
+    const bool running = nativeMovement ? nativeInputSpeed > 4.9f : inputLength > kWalkThreshold;
     if (sPilot.rollFrames > 0 && grounded) {
-        animation = Pilot_Animation(gPlayerAnim_link_normal_landing_roll_free);
+        animation = nativeMovement ? ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_landing_roll)
+                                   : Pilot_Animation(gPlayerAnim_link_normal_landing_roll_free);
         mode = ANIMMODE_ONCE;
     } else if (!grounded) {
-        animation = Pilot_Animation(gPlayerAnim_link_normal_jump);
+        animation = nativeMovement && actor->speedXZ > 4.0f
+                        ? Pilot_Animation(gPlayerAnim_link_normal_run_jump)
+                        : Pilot_Animation(gPlayerAnim_link_normal_jump);
         sPilot.landingFrames = 0;
     } else if (sPilot.itemFrames > 0) {
         switch (sPilot.itemPose) {
@@ -601,9 +612,32 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         mode = ANIMMODE_ONCE;
     } else if (heldBomb != nullptr) {
         animation = Pilot_Animation(moving ? gPlayerAnim_link_normal_carryB : gPlayerAnim_link_normal_carryB_wait);
+        locomotionLoop = moving;
     } else if (sPilot.landingFrames > 0) {
-        animation = Pilot_Animation(gPlayerAnim_link_normal_short_landing_free);
+        animation = nativeMovement ? ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_short_landing)
+                                   : Pilot_Animation(gPlayerAnim_link_normal_short_landing_free);
         mode = ANIMMODE_ONCE;
+    } else if (nativeMovement) {
+        if (!moving || actor->speedXZ < 0.15f) {
+            animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_wait);
+        } else if (sPilot.lockedTarget != nullptr || sPilot.parallelTargeting) {
+            const s16 facingDiff = player->yaw - actor->shape.rot.y;
+            if (std::abs(static_cast<s32>(facingDiff)) >= 0x6000) {
+                animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_back_walk);
+            } else if (facingDiff > 0x2000) {
+                animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_side_walkR);
+            } else if (facingDiff < -0x2000) {
+                animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_side_walkL);
+            } else {
+                animation = ShipCrewPlayer_GetGroupAnimation(
+                    player, running ? PLAYER_ANIMGROUP_run : PLAYER_ANIMGROUP_walk);
+            }
+            locomotionLoop = true;
+        } else {
+            animation = ShipCrewPlayer_GetGroupAnimation(
+                player, running ? PLAYER_ANIMGROUP_run : PLAYER_ANIMGROUP_walk);
+            locomotionLoop = true;
+        }
     } else if (!moving) {
         animation = Pilot_Animation(gPlayerAnim_link_normal_wait_free);
     } else if (inputLength <= kWalkThreshold) {
@@ -615,6 +649,11 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     if (player->skelAnime.animation != animation) {
         LinkAnimation_Change(play, &player->skelAnime, animation, 1.0f, 0.0f, Animation_GetLastFrame(animation), mode,
                              -3.0f);
+    }
+    // Native Link's gait speed follows locomotion rather than replaying one
+    // fixed-rate walk/run loop across every analog-stick magnitude.
+    if (nativeMovement && locomotionLoop) {
+        player->skelAnime.playSpeed = std::clamp(actor->speedXZ / (running ? 5.0f : 2.0f), 0.6f, 2.0f);
     }
     LinkAnimation_Update(play, &player->skelAnime);
 
