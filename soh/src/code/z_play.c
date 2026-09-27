@@ -1663,9 +1663,8 @@ void Play_Draw(PlayState* play) {
             Matrix_Mult(&play->viewProjectionMtxF, MTXMODE_NEW);
             Matrix_Mult(&play->billboardMtxF, MTXMODE_APPLY);
             Matrix_Get(&play->viewProjectionMtxF);
-            play->billboardMtxF.mf[0][3] = play->billboardMtxF.mf[1][3] =
-                play->billboardMtxF.mf[2][3] = play->billboardMtxF.mf[3][0] =
-                    play->billboardMtxF.mf[3][1] = play->billboardMtxF.mf[3][2] = 0.0f;
+            play->billboardMtxF.mf[0][3] = play->billboardMtxF.mf[1][3] = play->billboardMtxF.mf[2][3] =
+                play->billboardMtxF.mf[3][0] = play->billboardMtxF.mf[3][1] = play->billboardMtxF.mf[3][2] = 0.0f;
             Matrix_Transpose(&play->billboardMtxF);
             play->billboardMtx =
                 Matrix_MtxFToMtx(MATRIX_CHECKFLOATS(&play->billboardMtxF), Graph_Alloc(gfxCtx, sizeof(Mtx)));
@@ -1684,8 +1683,8 @@ void Play_Draw(PlayState* play) {
                     SkyboxDraw_Draw(&play->skyboxCtx, gfxCtx, play->skyboxId, play->envCtx.skyboxBlend,
                                     play->view.eye.x, play->view.eye.y, play->view.eye.z);
                 } else if (play->skyboxCtx.unk_140 == 0) {
-                    SkyboxDraw_Draw(&play->skyboxCtx, gfxCtx, play->skyboxId, 0,
-                                    play->view.eye.x, play->view.eye.y, play->view.eye.z);
+                    SkyboxDraw_Draw(&play->skyboxCtx, gfxCtx, play->skyboxId, 0, play->view.eye.x, play->view.eye.y,
+                                    play->view.eye.z);
                 }
             }
             Scene_Draw(play);

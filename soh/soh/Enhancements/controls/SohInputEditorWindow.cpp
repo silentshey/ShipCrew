@@ -1641,8 +1641,7 @@ void SohInputEditorWindow::DrawLinkTab() {
                                   "Both share save ammo; buttons must be released before reuse.\\n"
                                   "New roll/item animations and gravity are experimental. Use a test save."));
 
-        CVarCheckbox("ShipCrew: Vertical Split-Screen Camera (Experimental)",
-                     CVAR_SETTING("ShipCrew.SplitScreenPilot"),
+        CVarCheckbox("ShipCrew: Vertical Split-Screen Camera (Experimental)", CVAR_SETTING("ShipCrew.SplitScreenPilot"),
                      CheckboxOptions()
                          .Color(THEME_COLOR)
                          .Tooltip("Requires the Two-Link Pilot above. Renders the same 3D world twice: "

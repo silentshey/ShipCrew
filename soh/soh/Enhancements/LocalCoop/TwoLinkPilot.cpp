@@ -573,8 +573,8 @@ extern "C" s32 ShipCrewCamera_GetSecondView(PlayState* play, Vec3f* eye, Vec3f* 
     if (play == nullptr || eye == nullptr || at == nullptr || up == nullptr ||
         CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0 || CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) == 0 ||
         play->activeCamera != CAM_ID_MAIN || play->pauseCtx.state != 0 || play->pauseCtx.debugState != 0 ||
-        play->csCtx.state != CS_STATE_IDLE || R_PAUSE_MENU_MODE != 0 ||
-        !sPilot.cameraReady || FindPilotActor(play) != sPilot.actor) {
+        play->csCtx.state != CS_STATE_IDLE || R_PAUSE_MENU_MODE != 0 || !sPilot.cameraReady ||
+        FindPilotActor(play) != sPilot.actor) {
         return false;
     }
     *eye = sPilot.cameraEye;
