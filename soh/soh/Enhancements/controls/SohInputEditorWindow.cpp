@@ -1569,6 +1569,13 @@ void SohInputEditorWindow::DrawLinkTab() {
         DrawSetDefaultsButton(portIndex);
         DrawDeviceToggles(portIndex);
 
+        CVarCheckbox("ShipCrew: Two-Link Controller Pilot (Experimental)", CVAR_SETTING("ShipCrew.TwoLinkPilot"),
+                     CheckboxOptions()
+                         .Color(THEME_COLOR)
+                         .Tooltip("Spawns a visible second Link driven by controller port 2's left stick.\\n"
+                                  "Only independent position movement is implemented so far: no gravity, combat, "
+                                  "interactions, or P2 camera. Use a test save. Disable here to remove the pilot."));
+
         UpdateBitmaskToMappingIds(portIndex);
         UpdateStickDirectionToMappingIds(portIndex);
 
