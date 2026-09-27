@@ -90,8 +90,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     // Proof-of-concept only: safely reuse P1's pose for a visible Link.
     // Dedicated P2 animation, gravity, collisions and interactions come next.
     if (player->skelAnime.jointTable != nullptr && mainPlayer->skelAnime.jointTable != nullptr &&
-        player->skelAnime.dListCount == mainPlayer->skelAnime.dListCount &&
-        player->skelAnime.dListCount > 0 && player->skelAnime.dListCount <= 24) {
+        player->skelAnime.dListCount == mainPlayer->skelAnime.dListCount && player->skelAnime.dListCount > 0 &&
+        player->skelAnime.dListCount <= 24) {
         std::memcpy(player->skelAnime.jointTable, mainPlayer->skelAnime.jointTable,
                     static_cast<size_t>(player->skelAnime.dListCount) * sizeof(Vec3s));
     }
@@ -122,8 +122,8 @@ Actor* FindPilotActor(PlayState* play) {
 }
 
 bool CanRunPilot(PlayState* play) {
-    return play != nullptr && GET_PLAYER(play) != nullptr && gSaveContext.fileNum >= 0 &&
-           gSaveContext.fileNum <= 2 && gSaveContext.gameMode == GAMEMODE_NORMAL;
+    return play != nullptr && GET_PLAYER(play) != nullptr && gSaveContext.fileNum >= 0 && gSaveContext.fileNum <= 2 &&
+           gSaveContext.gameMode == GAMEMODE_NORMAL;
 }
 
 void Pilot_RegisterHooks() {
@@ -150,7 +150,10 @@ void Pilot_RegisterHooks() {
         }
 
         Actor* pilot = FindPilotActor(play);
-        if (CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0) {
+        // Existing Ivan fairy co-op also consumes controller port 2. Do not
+        // compete for that port while our experimental pilot is enabled.
+        if (CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0 ||
+            CVarGetInteger(CVAR_ENHANCEMENT("IvanCoopModeEnabled"), 0) != 0) {
             if (pilot != nullptr) {
                 Actor_Kill(pilot);
             }
