@@ -67,6 +67,7 @@ struct PilotRuntime {
     Actor* heldBomb = nullptr;
     Actor* lockedTarget = nullptr;
     bool parallelTargeting = false;
+    int parallelRecenterFrames = 0;
     // Derive rising edges from port 2's current buttons. Some controller
     // mappings can repeatedly report press bits while a button is held;
     // a button must become fully released before another item action.
@@ -375,11 +376,13 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     if (!canAct || (holdTargeting && !zHeld)) {
         sPilot.lockedTarget = nullptr;
         sPilot.parallelTargeting = false;
+        sPilot.parallelRecenterFrames = 0;
     } else if (canAct && (pressed & BTN_Z)) {
         Actor* next = Pilot_FindTarget(play, actor, sPilot.lockedTarget);
         if (next != nullptr) {
             sPilot.lockedTarget = next;
             sPilot.parallelTargeting = false;
+            sPilot.parallelRecenterFrames = 0;
         } else if (sPilot.lockedTarget != nullptr) {
             // Switch mode toggles lock off when no other eligible actor exists.
             // In hold mode, losing a target returns to parallel while held.
@@ -387,6 +390,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             sPilot.parallelTargeting = holdTargeting;
         } else {
             sPilot.parallelTargeting = true;
+            sPilot.parallelRecenterFrames = 15;
         }
     }
     if (sPilot.lockedTarget != nullptr) {
@@ -397,7 +401,9 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             sPilot.parallelTargeting = holdTargeting && zHeld;
         }
     }
-    if (!zHeld && sPilot.parallelTargeting)
+    if (sPilot.parallelRecenterFrames > 0)
+        --sPilot.parallelRecenterFrames;
+    if (!zHeld && sPilot.parallelTargeting && (holdTargeting || sPilot.parallelRecenterFrames == 0))
         sPilot.parallelTargeting = false;
     if (sPilot.lockedTarget != nullptr) {
         player->focusActor = sPilot.lockedTarget;
