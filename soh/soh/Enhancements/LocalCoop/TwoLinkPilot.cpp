@@ -355,11 +355,27 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     const f32 z = static_cast<f32>(pad.stick_y) / kMaxStickValue;
     const f32 inputLength = std::sqrt(x * x + z * z);
     const bool moving = inputLength > 0.17f;
-    // Camera-relative movement is only enabled by the separate opt-in split
-    // camera experiment. Keep proven P2 world-stick behavior when it is off.
-    const bool useOrbit = CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) != 0;
-    const f32 worldX = useOrbit ? x * std::cos(sPilot.cameraYaw) + z * std::sin(sPilot.cameraYaw) : x;
-    const f32 worldZ = useOrbit ? z * std::cos(sPilot.cameraYaw) - x * std::sin(sPilot.cameraYaw) : z;
+    // Camera-relative movement must use the exact horizontal orientation of
+    // P2's *rendered* camera, not its unsmoothed target yaw. Derive the basis
+    // from the same cached eye/at passed to the second world render.
+    //
+    // Camera forward is eye -> at. Its screen-right vector is
+    // (-forward.z, +forward.x), i.e. NOT (+forward.z, -forward.x).
+    // The previous implementation had the lateral direction reversed.
+    //
+    // Preserve the validated world-space movement if split is disabled or
+    // the P2 camera is still initializing.
+    f32 worldX = x;
+    f32 worldZ = z;
+    if (CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) != 0 && sPilot.cameraReady) {
+        const f32 forwardX = sPilot.cameraAt.x - sPilot.cameraEye.x;
+        const f32 forwardZ = sPilot.cameraAt.z - sPilot.cameraEye.z;
+        const f32 horizontalLength = std::sqrt(forwardX * forwardX + forwardZ * forwardZ);
+        if (horizontalLength > 0.001f) {
+            worldX = (z * forwardX - x * forwardZ) / horizontalLength;
+            worldZ = (z * forwardZ + x * forwardX) / horizontalLength;
+        }
+    }
     const bool wasGrounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
     const bool canAct = !Player_InBlockingCsMode(play, GET_PLAYER(play));
 
