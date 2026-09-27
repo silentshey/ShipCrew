@@ -1324,9 +1324,10 @@ void Play_Draw(PlayState* play) {
     f32 shipSecondFov = play->view.fovy;
     // Prerendered background rooms do not support a second 3D camera.
     // Cutscenes and paused/menu frames are rejected by the camera bridge.
-    const s32 shipSplit = (gTrnsnUnkState == 0) && (play->roomCtx.curRoom.meshHeader != NULL) &&
-                          (play->roomCtx.curRoom.meshHeader->base.type != 1) &&
-                          ShipCrewCamera_GetSecondView(play, &shipSecondEye, &shipSecondAt, &shipSecondUp, &shipSecondFov);
+    const s32 shipSplit =
+        (gTrnsnUnkState == 0) && (play->roomCtx.curRoom.meshHeader != NULL) &&
+        (play->roomCtx.curRoom.meshHeader->base.type != 1) &&
+        ShipCrewCamera_GetSecondView(play, &shipSecondEye, &shipSecondAt, &shipSecondUp, &shipSecondFov);
     const Viewport shipFullViewport = play->view.viewport;
 
     // #region SOH [Port] Frame buffer effects for pause menu
