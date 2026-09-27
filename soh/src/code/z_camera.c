@@ -1565,7 +1565,8 @@ s32 Camera_Free(Camera* camera) {
 }
 
 s32 Camera_Normal1(Camera* camera) {
-    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
+    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) &&
+        SetCameraManual(camera) == 1) {
         Camera_Free(camera);
         return 1;
     }
@@ -1811,7 +1812,8 @@ s32 Camera_Normal1(Camera* camera) {
 }
 
 s32 Camera_Normal2(Camera* camera) {
-    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
+    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) &&
+        SetCameraManual(camera) == 1) {
         Camera_Free(camera);
         return 1;
     }
@@ -1982,7 +1984,8 @@ s32 Camera_Normal2(Camera* camera) {
 
 // riding epona
 s32 Camera_Normal3(Camera* camera) {
-    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
+    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) &&
+        SetCameraManual(camera) == 1) {
         Camera_Free(camera);
         return 1;
     }
@@ -2346,7 +2349,8 @@ s32 Camera_Parallel0(Camera* camera) {
  * Generic jump, jumping off ledges
  */
 s32 Camera_Jump1(Camera* camera) {
-    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
+    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) &&
+        SetCameraManual(camera) == 1) {
         Camera_Free(camera);
         return 1;
     }
@@ -2496,7 +2500,8 @@ s32 Camera_Jump1(Camera* camera) {
 
 // Climbing ladders/vines
 s32 Camera_Jump2(Camera* camera) {
-    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
+    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) &&
+        SetCameraManual(camera) == 1) {
         Camera_Free(camera);
         return 1;
     }
@@ -2683,7 +2688,8 @@ s32 Camera_Jump2(Camera* camera) {
 
 // swimming
 s32 Camera_Jump3(Camera* camera) {
-    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
+    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) &&
+        SetCameraManual(camera) == 1) {
         Camera_Free(camera);
         return 1;
     }
@@ -3145,7 +3151,8 @@ s32 Camera_Battle3(Camera* camera) {
  * setting value.
  */
 s32 Camera_Battle4(Camera* camera) {
-    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
+    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) &&
+        SetCameraManual(camera) == 1) {
         Camera_Free(camera);
         return 1;
     }
@@ -4680,7 +4687,8 @@ s32 Camera_Data4(Camera* camera) {
  * Hanging off of a ledge
  */
 s32 Camera_Unique1(Camera* camera) {
-    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1) {
+    if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) &&
+        SetCameraManual(camera) == 1) {
         Camera_Free(camera);
         return 1;
     }
@@ -7806,8 +7814,7 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
         return;
     }
     player = ShipCrewCamera_GetNativeSecondPlayer(play);
-    if (player == NULL || play->cameraPtrs[CAM_ID_MAIN] == NULL ||
-        play->mainCamera.status != CAM_STAT_ACTIVE) {
+    if (player == NULL || play->cameraPtrs[CAM_ID_MAIN] == NULL || play->mainCamera.status != CAM_STAT_ACTIVE) {
         p2Play = NULL;
         p2Player = NULL;
         return;
@@ -8032,7 +8039,8 @@ s32 Camera_RequestModeImpl(Camera* camera, s16 requestedMode, u8 forceModeChange
         }
 
         // Clear free look if an action is performed that would move the camera (targeting, first person, talking)
-        if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) && SetCameraManual(camera) == 1 &&
+        if (!sShipCrewUpdatingNativeSecondCamera && CVarGetInteger(CVAR_SETTING("FreeLook.Enabled"), 0) &&
+            SetCameraManual(camera) == 1 &&
             ((requestedMode >= CAM_MODE_TARGET && requestedMode <= CAM_MODE_BATTLE) ||
              (requestedMode >= CAM_MODE_FIRST_PERSON && requestedMode <= CAM_MODE_CLIMBZ) ||
              requestedMode == CAM_MODE_HANGZ || requestedMode == CAM_MODE_FOLLOWBOOMERANG)) {
