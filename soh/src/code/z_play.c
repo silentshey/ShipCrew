@@ -21,6 +21,7 @@ TransitionUnk sTrnsnUnk;
 s32 gTrnsnUnkState;
 VisMono gPlayVisMono;
 Color_RGBA8_u32 gVisMonoColor;
+static u8 sShipCrewSplitRenderMarker;
 
 FaultClient D_801614B8;
 
@@ -1319,7 +1320,7 @@ void Play_Draw(PlayState* play) {
     Vec3f shipSecondUp;
     // Prerendered background rooms do not support a second 3D camera.
     // Cutscenes and paused/menu frames are rejected by the camera bridge.
-    const s32 shipSplit = (play->roomCtx.curRoom.meshHeader != NULL) &&
+    const s32 shipSplit = (gTrnsnUnkState == 0) && (play->roomCtx.curRoom.meshHeader != NULL) &&
                           (play->roomCtx.curRoom.meshHeader->base.type != 1) &&
                           ShipCrewCamera_GetSecondView(play, &shipSecondEye, &shipSecondAt, &shipSecondUp);
     const Viewport shipFullViewport = play->view.viewport;
@@ -1677,7 +1678,16 @@ void Play_Draw(PlayState* play) {
             // still belong to the first pass until they are made view-aware.
             POLY_OPA_DISP = Play_SetFog(play, POLY_OPA_DISP);
             POLY_XLU_DISP = Play_SetFog(play, POLY_XLU_DISP);
-            FrameInterpolation_RecordOpenChild(&shipFirstView, 2);
+            FrameInterpolation_RecordOpenChild(&sShipCrewSplitRenderMarker, 2);
+            if (play->skyboxId && play->skyboxId != SKYBOX_UNSET_1D && !play->envCtx.skyboxDisabled) {
+                if (play->skyboxId == SKYBOX_NORMAL_SKY || play->skyboxId == SKYBOX_CUTSCENE_MAP) {
+                    SkyboxDraw_Draw(&play->skyboxCtx, gfxCtx, play->skyboxId, play->envCtx.skyboxBlend,
+                                    play->view.eye.x, play->view.eye.y, play->view.eye.z);
+                } else if (play->skyboxCtx.unk_140 == 0) {
+                    SkyboxDraw_Draw(&play->skyboxCtx, gfxCtx, play->skyboxId, 0,
+                                    play->view.eye.x, play->view.eye.y, play->view.eye.z);
+                }
+            }
             Scene_Draw(play);
             Room_Draw(play, &play->roomCtx.curRoom, 3);
             Room_Draw(play, &play->roomCtx.prevRoom, 3);
@@ -1689,6 +1699,7 @@ void Play_Draw(PlayState* play) {
             play->viewProjectionMtxF = shipFirstProjection;
             play->billboardMtxF = shipFirstBillboard;
             play->billboardMtx = shipFirstBillboardPtr;
+            Matrix_Mult(&shipFirstProjection, MTXMODE_NEW);
 
             // Restore the full viewport for any later non-world graphics;
             // the original P1 camera remains the engine's active camera.
