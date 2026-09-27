@@ -116,8 +116,8 @@ void Pilot_UseBomb(Actor* actor, PlayState* play) {
     }
     const f32 radians = static_cast<f32>(actor->shape.rot.y) / kRadiansToN64Angle;
     Actor* bomb = Actor_SpawnAsChild(&play->actorCtx, actor, play, ACTOR_EN_BOM,
-                                    actor->world.pos.x + std::sin(radians) * 10.0f, actor->world.pos.y + 48.0f,
-                                    actor->world.pos.z + std::cos(radians) * 10.0f, 0, actor->shape.rot.y, 0, 0);
+                                     actor->world.pos.x + std::sin(radians) * 10.0f, actor->world.pos.y + 48.0f,
+                                     actor->world.pos.z + std::cos(radians) * 10.0f, 0, actor->shape.rot.y, 0, 0);
     if (bomb == nullptr) {
         return; // No actor, no ammo cost.
     }
@@ -248,8 +248,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     if (canAct && (pressed & BTN_A) && heldBomb != nullptr && sPilot.itemDebounceFrames == 0) {
         Pilot_ReleaseBomb(actor, heldBomb, moving);
         heldBomb = nullptr;
-    } else if (canAct && (pressed & BTN_A) && heldBomb == nullptr && wasGrounded && moving &&
-               sPilot.rollFrames == 0 && sPilot.itemFrames == 0) {
+    } else if (canAct && (pressed & BTN_A) && heldBomb == nullptr && wasGrounded && moving && sPilot.rollFrames == 0 &&
+               sPilot.itemFrames == 0) {
         sPilot.rollFrames = kRollFrames;
         sPilot.landingFrames = 0;
     }
@@ -323,8 +323,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         }
         mode = ANIMMODE_ONCE;
     } else if (heldBomb != nullptr) {
-        animation = Pilot_Animation(moving ? gPlayerAnim_link_normal_carryB
-                                            : gPlayerAnim_link_normal_carryB_wait);
+        animation = Pilot_Animation(moving ? gPlayerAnim_link_normal_carryB : gPlayerAnim_link_normal_carryB_wait);
     } else if (sPilot.landingFrames > 0) {
         animation = Pilot_Animation(gPlayerAnim_link_normal_short_landing_free);
         mode = ANIMMODE_ONCE;
