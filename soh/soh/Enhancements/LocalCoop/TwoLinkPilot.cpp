@@ -363,14 +363,14 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             worldZ = (z * forwardZ + x * forwardX) / horizontalLength;
         }
     }
+    const bool wasGrounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
+    const bool canAct = !Player_InBlockingCsMode(play, GET_PLAYER(play));
     if (!Pilot_TargetIsLive(play, sPilot.lockedTarget))
         sPilot.lockedTarget = nullptr;
     if (canAct && (pressed & BTN_Z)) {
         // Second press cycles to another visible enemy or releases lock.
         sPilot.lockedTarget = Pilot_FindTarget(play, actor, sPilot.lockedTarget);
     }
-    const bool wasGrounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
-    const bool canAct = !Player_InBlockingCsMode(play, GET_PLAYER(play));
 
     Actor* heldBomb = Pilot_FindHeldBomb(actor, play);
     // The original action button releases a carried bomb first. Otherwise A
