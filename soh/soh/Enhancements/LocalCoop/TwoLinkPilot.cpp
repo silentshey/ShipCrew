@@ -23,12 +23,16 @@ extern "C" {
 extern PlayState* gPlayState;
 void Player_UseItem(PlayState* play, Player* player, s32 item);
 void Player_Draw(Actor* actor, PlayState* play);
+LinkAnimationHeader* ShipCrewPlayer_GetGroupAnimation(Player* player, s32 group);
+f32 ShipCrewPlayer_GetRunSpeedLimit(void);
+f32 ShipCrewPlayer_CalcGroundSpeedTarget(f32 magnitude, f32 speedCap, s16 floorPitch, s32 curved);
 }
 
 // The experimental switch lives in the existing Controls settings screen.
 // Leave disabled by default so the already validated single-player build is unchanged.
 #define SHIPCREW_PILOT_CVAR CVAR_SETTING("ShipCrew.TwoLinkPilot")
 #define SHIPCREW_SPLIT_CVAR CVAR_SETTING("ShipCrew.SplitScreenPilot")
+#define SHIPCREW_NATIVE_LOCOMOTION_CVAR CVAR_SETTING("ShipCrew.P2NativeLocomotion")
 
 namespace {
 
@@ -39,6 +43,7 @@ constexpr f32 kAcceleration = 0.6f;
 constexpr f32 kDeceleration = 0.8f;
 constexpr f32 kRollSpeed = 6.0f;
 constexpr int kRollFrames = 14;
+constexpr int kNativeRollFrames = 20;
 constexpr int kLandingFrames = 6;
 constexpr int kItemFrames = 11;
 constexpr int kItemDebounceFrames = 12;
@@ -74,6 +79,9 @@ struct PilotRuntime {
     u32 previousButtons = 0;
     int itemDebounceFrames = 0;
     int rollFrames = 0;
+    f32 rollSpeed = 0.0f;
+    s16 rollYaw = 0;
+    bool nativeMovementPreviouslyEnabled = false;
     int landingFrames = 0;
     int itemFrames = 0;
     // Track shared ammo between P2 updates. A changed value outside a P2
@@ -421,19 +429,83 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     Actor* heldBomb = Pilot_FindHeldBomb(actor, play);
     // The original action button releases a carried bomb first. Otherwise A
     // rolls while running; there is no manual A-button jump.
+    const bool nativeMovement = CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0;
+    if (nativeMovement && !sPilot.nativeMovementPreviouslyEnabled) {
+        player->linearVelocity = actor->speedXZ;
+        player->yaw = actor->world.rot.y;
+    }
+    sPilot.nativeMovementPreviouslyEnabled = nativeMovement;
+
     if (canAct && (pressed & BTN_A) && heldBomb != nullptr && sPilot.itemDebounceFrames == 0) {
         Pilot_ReleaseBomb(actor, heldBomb, moving);
         heldBomb = nullptr;
     } else if (canAct && (pressed & BTN_A) && heldBomb == nullptr && wasGrounded && moving && sPilot.rollFrames == 0 &&
                sPilot.itemFrames == 0) {
-        sPilot.rollFrames = kRollFrames;
+        sPilot.rollFrames = nativeMovement ? kNativeRollFrames : kRollFrames;
+        // Native Link rolls at 1.5 times the curved stick speed, minimum 3.
+        const f32 magnitude = 80.0f * std::min(inputLength, 1.0f);
+        const f32 speedCap = ShipCrewPlayer_GetRunSpeedLimit();
+        sPilot.rollSpeed = nativeMovement
+                               ? std::max(3.0f, ShipCrewPlayer_CalcGroundSpeedTarget(
+                                                    magnitude, speedCap, player->floorPitch, true) *
+                                                    1.5f)
+                               : kRollSpeed;
+        sPilot.rollYaw = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
         sPilot.landingFrames = 0;
     }
 
-    // Smooth analog acceleration allows walking, full-speed running and
-    // deceleration; a roll commits to its original facing and short burst.
+    // The opt-in path uses Link's original analog speed curve, dynamic run
+    // limit, asymmetrical acceleration, turning brake and age-specific
+    // collision dimensions. The original tested pilot remains a fallback.
     const f32 requestedSpeed = canAct && moving ? kRunSpeed * std::min(inputLength, 1.0f) : 0.0f;
-    if (sPilot.rollFrames > 0) {
+    if (nativeMovement) {
+        const f32 nativeLimit = ShipCrewPlayer_GetRunSpeedLimit();
+        const f32 stickMagnitude = 80.0f * std::min(inputLength, 1.0f);
+        f32 speedLimit = nativeLimit;
+        if (wasGrounded && (actor->bgCheckFlags & BGCHECKFLAG_WALL)) {
+            const s16 wallDiff = player->yaw - static_cast<s16>(actor->wallYaw + 0x8000);
+            speedLimit = std::clamp(static_cast<f32>(std::abs(static_cast<s32>(wallDiff))) * 0.00008f,
+                                    0.1f / std::max(nativeLimit, 0.1f), 1.0f) *
+                         nativeLimit;
+        }
+        player->unk_880 = speedLimit;
+        const f32 nativeTarget = canAct && moving
+                                     ? ShipCrewPlayer_CalcGroundSpeedTarget(
+                                           stickMagnitude, speedLimit, player->floorPitch,
+                                           sPilot.lockedTarget == nullptr && !sPilot.parallelTargeting)
+                                     : 0.0f;
+        if (sPilot.rollFrames > 0) {
+            actor->speedXZ = sPilot.rollSpeed;
+            actor->world.rot.y = sPilot.rollYaw;
+            player->linearVelocity = sPilot.rollSpeed;
+            player->yaw = sPilot.rollYaw;
+        } else {
+            const s16 desiredYaw =
+                static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
+            const s16 yawDiff = desiredYaw - player->yaw;
+            const bool brakingTurn = canAct && moving && wasGrounded && std::abs(static_cast<s32>(yawDiff)) > 0x4000;
+            f32 motionTarget = nativeTarget;
+            if (brakingTurn) {
+                motionTarget = 0.0f;
+                if (Math_StepToF(&player->linearVelocity, 0.0f, 1.5f))
+                    player->yaw = desiredYaw;
+            } else {
+                if (canAct && moving)
+                    Math_ScaledStepToS(&player->yaw, desiredYaw,
+                                       static_cast<f32>(std::abs(static_cast<s32>(yawDiff))) * 0.1f);
+                // OoT's grounded walking and running states use distinct
+                // speed multipliers and asymmetric speed steps.
+                const bool running = motionTarget > 4.9f;
+                motionTarget *= running ? 0.9f : 0.4f;
+                Math_AsymStepToF(&player->linearVelocity, motionTarget, running ? 2.0f : 1.5f,
+                                 running ? 3.0f : 1.5f);
+            }
+            actor->speedXZ = std::max(player->linearVelocity, 0.0f);
+            actor->world.rot.y = player->yaw;
+        }
+        if (sPilot.lockedTarget == nullptr)
+            actor->shape.rot.y = actor->world.rot.y;
+    } else if (sPilot.rollFrames > 0) {
         actor->speedXZ = kRollSpeed;
     } else {
         if (requestedSpeed > actor->speedXZ) {
@@ -457,7 +529,25 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     }
     const bool fallingBeforeMove = actor->velocity.y < -1.0f;
     Actor_MoveXZGravity(actor);
-    Actor_UpdateBgCheckInfo(play, actor, kWallCheckHeight, kWallCheckRadius, kCeilingCheckHeight, 0x1D);
+    if (nativeMovement && player->ageProperties != nullptr) {
+        Actor_UpdateBgCheckInfo(play, actor, 26.0f, player->ageProperties->wallCheckRadius,
+                                player->ageProperties->ceilingCheckHeight, 0x3F);
+        if (actor->floorPoly != nullptr && (actor->bgCheckFlags & BGCHECKFLAG_GROUND)) {
+            // Link's floor pitch is sampled in the direction of travel and
+            // feeds directly into the vanilla analog speed curve next frame.
+            const f32 nx = COLPOLY_GET_NORMAL(actor->floorPoly->normal.x);
+            const f32 ny = COLPOLY_GET_NORMAL(actor->floorPoly->normal.y);
+            const f32 nz = COLPOLY_GET_NORMAL(actor->floorPoly->normal.z);
+            if (std::fabs(ny) > 0.01f) {
+                const f32 slope = -(nx * Math_SinS(player->yaw) + nz * Math_CosS(player->yaw)) / ny;
+                player->floorPitch = Math_Atan2S(1.0f, slope);
+            }
+        } else {
+            player->floorPitch = 0;
+        }
+    } else {
+        Actor_UpdateBgCheckInfo(play, actor, kWallCheckHeight, kWallCheckRadius, kCeilingCheckHeight, 0x1D);
+    }
     Actor_SetFocus(actor, 40.0f);
     if (CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) == 0) {
         sPilot.cameraReady = false;
