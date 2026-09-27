@@ -3928,8 +3928,7 @@ void Player_UpdateZTargeting(Player* this, PlayState* play) {
 // group table as original Link. Only the caller chooses the action: exposing
 // assets is not equivalent to running Player_UpdateCommon a second time.
 LinkAnimationHeader* ShipCrewPlayer_GetGroupAnimation(Player* player, s32 group) {
-    if (player == NULL || group < 0 || group >= PLAYER_ANIMGROUP_MAX ||
-        player->modelAnimType >= PLAYER_ANIMTYPE_MAX) {
+    if (player == NULL || group < 0 || group >= PLAYER_ANIMGROUP_MAX || player->modelAnimType >= PLAYER_ANIMTYPE_MAX) {
         return &gPlayerAnim_link_normal_wait_free;
     }
     return D_80853914[group][player->modelAnimType];
