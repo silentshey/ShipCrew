@@ -74,17 +74,15 @@ LinkAnimationHeader* Pilot_Animation(const char* asset) {
 // Item actors are the normal game actors, so they affect the same world.
 // Only consume the shared save's ammo AFTER the actor actually spawned.
 void Pilot_UseBomb(Actor* actor, PlayState* play) {
-    if (AMMO(ITEM_BOMB) <= 0 ||
-        (play->actorCtx.actorLists[ACTORCAT_EXPLOSIVE].length >= kMaxWorldBombs &&
-         CVarGetInteger(CVAR_ENHANCEMENT("RemoveExplosiveLimit"), 0) == 0)) {
+    if (AMMO(ITEM_BOMB) <= 0 || (play->actorCtx.actorLists[ACTORCAT_EXPLOSIVE].length >= kMaxWorldBombs &&
+                                 CVarGetInteger(CVAR_ENHANCEMENT("RemoveExplosiveLimit"), 0) == 0)) {
         Sfx_PlaySfxCentered(NA_SE_SY_ERROR);
         return;
     }
     const f32 radians = static_cast<f32>(actor->shape.rot.y) / kRadiansToN64Angle;
     Actor* bomb = Actor_Spawn(&play->actorCtx, play, ACTOR_EN_BOM,
-                             actor->world.pos.x + std::sin(radians) * kItemDropDistance,
-                             actor->world.pos.y + 7.0f,
-                             actor->world.pos.z + std::cos(radians) * kItemDropDistance, 0, actor->shape.rot.y, 0, 0);
+                              actor->world.pos.x + std::sin(radians) * kItemDropDistance, actor->world.pos.y + 7.0f,
+                              actor->world.pos.z + std::cos(radians) * kItemDropDistance, 0, actor->shape.rot.y, 0, 0);
     if (bomb != nullptr) {
         Inventory_ChangeAmmo(ITEM_BOMB, -1);
         sPilot.itemPose = PilotItemPose::Bomb;
@@ -98,11 +96,10 @@ void Pilot_UseNut(Actor* actor, PlayState* play) {
         return;
     }
     const f32 radians = static_cast<f32>(actor->shape.rot.y) / kRadiansToN64Angle;
-    Actor* nut = Actor_Spawn(&play->actorCtx, play, ACTOR_EN_ARROW,
-                            actor->world.pos.x + std::sin(radians) * kItemDropDistance,
-                            actor->world.pos.y + 35.0f,
-                            actor->world.pos.z + std::cos(radians) * kItemDropDistance, 0x1000,
-                            actor->shape.rot.y, 0, ARROW_NUT);
+    Actor* nut =
+        Actor_Spawn(&play->actorCtx, play, ACTOR_EN_ARROW, actor->world.pos.x + std::sin(radians) * kItemDropDistance,
+                    actor->world.pos.y + 35.0f, actor->world.pos.z + std::cos(radians) * kItemDropDistance, 0x1000,
+                    actor->shape.rot.y, 0, ARROW_NUT);
     if (nut != nullptr) {
         Inventory_ChangeAmmo(ITEM_NUT, -1);
         sPilot.itemPose = PilotItemPose::Nut;
@@ -167,8 +164,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         actor->bgCheckFlags &= ~BGCHECKFLAG_GROUND;
         sPilot.landingFrames = 0;
     }
-    if (canAct && (pressed & BTN_B) && wasGrounded && moving && sPilot.rollFrames == 0 &&
-        sPilot.itemFrames == 0) {
+    if (canAct && (pressed & BTN_B) && wasGrounded && moving && sPilot.rollFrames == 0 && sPilot.itemFrames == 0) {
         sPilot.rollFrames = kRollFrames;
         sPilot.landingFrames = 0;
     }
@@ -217,12 +213,12 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         animation = Pilot_Animation(gPlayerAnim_link_normal_landing_roll_free);
         mode = ANIMMODE_ONCE;
     } else if (!grounded) {
-        animation = Pilot_Animation(actor->velocity.y > 0.5f ? gPlayerAnim_link_normal_jump_up
-                                                             : gPlayerAnim_link_normal_jump);
+        animation =
+            Pilot_Animation(actor->velocity.y > 0.5f ? gPlayerAnim_link_normal_jump_up : gPlayerAnim_link_normal_jump);
         sPilot.landingFrames = 0;
     } else if (sPilot.itemFrames > 0) {
         animation = Pilot_Animation(sPilot.itemPose == PilotItemPose::Bomb ? gPlayerAnim_link_normal_put_free
-                                                                          : gPlayerAnim_link_normal_light_bom);
+                                                                           : gPlayerAnim_link_normal_light_bom);
         mode = ANIMMODE_ONCE;
     } else if (sPilot.landingFrames > 0) {
         animation = Pilot_Animation(gPlayerAnim_link_normal_short_landing_free);
