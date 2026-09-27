@@ -22,6 +22,18 @@ s32 gTrnsnUnkState;
 VisMono gPlayVisMono;
 Color_RGBA8_u32 gVisMonoColor;
 static u8 sShipCrewSplitRenderMarker;
+static s32 sShipCrewSplitDrawActive = false;
+static MtxF sShipCrewSecondViewProjection;
+
+// Interface_Draw executes after the world passes in this same frame. The
+// overlay reticles need the independently projected P2 view, not P1's matrix.
+s32 ShipCrewCamera_GetSplitOverlayProjection(PlayState* play, MtxF* out) {
+    if (!sShipCrewSplitDrawActive || play == NULL || play != gPlayState)
+        return false;
+    if (out != NULL)
+        *out = sShipCrewSecondViewProjection;
+    return true;
+}
 
 FaultClient D_801614B8;
 
@@ -1329,6 +1341,7 @@ void Play_Draw(PlayState* play) {
         (play->roomCtx.curRoom.meshHeader->base.type != 1) &&
         ShipCrewCamera_GetSecondView(play, &shipSecondEye, &shipSecondAt, &shipSecondUp, &shipSecondFov);
     const Viewport shipFullViewport = play->view.viewport;
+    sShipCrewSplitDrawActive = false;
 
     // #region SOH [Port] Frame buffer effects for pause menu
     // Track render size when paused and that a copy was performed
@@ -1668,6 +1681,8 @@ void Play_Draw(PlayState* play) {
             Matrix_Mult(&play->viewProjectionMtxF, MTXMODE_NEW);
             Matrix_Mult(&play->billboardMtxF, MTXMODE_APPLY);
             Matrix_Get(&play->viewProjectionMtxF);
+            sShipCrewSecondViewProjection = play->viewProjectionMtxF;
+            sShipCrewSplitDrawActive = true;
             play->billboardMtxF.mf[0][3] = play->billboardMtxF.mf[1][3] = play->billboardMtxF.mf[2][3] =
                 play->billboardMtxF.mf[3][0] = play->billboardMtxF.mf[3][1] = play->billboardMtxF.mf[3][2] = 0.0f;
             Matrix_Transpose(&play->billboardMtxF);
