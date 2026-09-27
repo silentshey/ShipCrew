@@ -1,0 +1,26 @@
+name: ShipCrew tunic model tests
+
+on:
+  push:
+    paths:
+      - 'soh/soh/Enhancements/LocalCoop/TunicSelection.h'
+      - 'tests/shipcrew_tunic_selection_test.cpp'
+      - '.github/workflows/shipcrew-tunic-tests.yml'
+  pull_request:
+    paths:
+      - 'soh/soh/Enhancements/LocalCoop/TunicSelection.h'
+      - 'tests/shipcrew_tunic_selection_test.cpp'
+      - '.github/workflows/shipcrew-tunic-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  tunic-state:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test isolated tunic selection state
+        run: |
+          g++ -std=c++20 -Wall -Wextra -Werror -I. tests/shipcrew_tunic_selection_test.cpp -o tunic-selection-test
+          ./tunic-selection-test
