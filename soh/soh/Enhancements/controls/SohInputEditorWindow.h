@@ -89,6 +89,7 @@ class SohInputEditorWindow final : public Ship::GuiWindow {
 
     void GetButtonColorsForDeviceType(Ship::PhysicalDeviceType lusIndex, ImVec4& buttonColor,
                                       ImVec4& buttonHoveredColor);
+    void DrawPortMappings(uint8_t portIndex);
     void DrawLinkTab();
     void DrawIvanTab();
     void DrawDebugPortTab(uint8_t portIndex, std::string customName = "");

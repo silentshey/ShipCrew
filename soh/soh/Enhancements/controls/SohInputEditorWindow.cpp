@@ -1562,6 +1562,68 @@ void SohInputEditorWindow::DrawDeviceToggles(uint8_t portIndex) {
     }
 }
 
+void SohInputEditorWindow::DrawPortMappings(uint8_t portIndex) {
+    UpdateBitmaskToMappingIds(portIndex);
+    UpdateStickDirectionToMappingIds(portIndex);
+
+    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.133f, 0.133f, 0.133f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+
+    if (ImGui::CollapsingHeader("Buttons", NULL, ImGuiTreeNodeFlags_DefaultOpen)) {
+        DrawButtonLine("A", portIndex, BTN_A, CHIP_COLOR_N64_BLUE);
+        DrawButtonLine("B", portIndex, BTN_B, CHIP_COLOR_N64_GREEN);
+        DrawButtonLine("Start", portIndex, BTN_START, CHIP_COLOR_N64_RED);
+        DrawButtonLine("L", portIndex, BTN_L);
+        DrawButtonLine("R", portIndex, BTN_R);
+        DrawButtonLine("Z", portIndex, BTN_Z);
+        DrawButtonLine(StringHelper::Sprintf("C %s", ICON_FA_ARROW_UP).c_str(), portIndex, BTN_CUP,
+                       CHIP_COLOR_N64_YELLOW);
+        DrawButtonLine(StringHelper::Sprintf("C %s", ICON_FA_ARROW_DOWN).c_str(), portIndex, BTN_CDOWN,
+                       CHIP_COLOR_N64_YELLOW);
+        DrawButtonLine(StringHelper::Sprintf("C %s", ICON_FA_ARROW_LEFT).c_str(), portIndex, BTN_CLEFT,
+                       CHIP_COLOR_N64_YELLOW);
+        DrawButtonLine(StringHelper::Sprintf("C %s", ICON_FA_ARROW_RIGHT).c_str(), portIndex, BTN_CRIGHT,
+                       CHIP_COLOR_N64_YELLOW);
+    }
+
+    if (ImGui::CollapsingHeader("D-Pad", NULL, ImGuiTreeNodeFlags_DefaultOpen)) {
+        DrawButtonLine(StringHelper::Sprintf("D %s", ICON_FA_ARROW_UP).c_str(), portIndex, BTN_DUP);
+        DrawButtonLine(StringHelper::Sprintf("D %s", ICON_FA_ARROW_DOWN).c_str(), portIndex, BTN_DDOWN);
+        DrawButtonLine(StringHelper::Sprintf("D %s", ICON_FA_ARROW_LEFT).c_str(), portIndex, BTN_DLEFT);
+        DrawButtonLine(StringHelper::Sprintf("D %s", ICON_FA_ARROW_RIGHT).c_str(), portIndex, BTN_DRIGHT);
+    }
+
+    if (ImGui::CollapsingHeader("Analog Stick", NULL, ImGuiTreeNodeFlags_DefaultOpen)) {
+        DrawStickSection(portIndex, Ship::LEFT, 0);
+    }
+
+    if (ImGui::CollapsingHeader("Additional (\"Right\") Stick")) {
+        DrawStickSection(portIndex, Ship::RIGHT, 1, CHIP_COLOR_N64_YELLOW);
+    }
+
+    if (ImGui::CollapsingHeader("Rumble")) {
+        DrawRumbleSection(portIndex);
+    }
+
+    if (ImGui::CollapsingHeader("Gyro")) {
+        DrawGyroSection(portIndex);
+    }
+
+    if (ImGui::CollapsingHeader("LEDs")) {
+        DrawLEDSection(portIndex);
+    }
+
+    if (ImGui::CollapsingHeader("Modifier Buttons")) {
+        DrawButtonLine("M1", portIndex, BTN_CUSTOM_MODIFIER1);
+        DrawButtonLine("M2", portIndex, BTN_CUSTOM_MODIFIER2);
+    }
+
+    ImGui::PopStyleColor(3);
+}
+
+// The same physical mappings (buttons, dual sticks, rumble, gyro and LEDs)
+// are available on every player port. Gameplay options are not yet per-player.
 void SohInputEditorWindow::DrawLinkTab() {
     uint8_t portIndex = 0;
     if (ImGui::BeginTabItem(StringHelper::Sprintf("Link (P1)###port%d", portIndex).c_str())) {
@@ -1572,68 +1634,18 @@ void SohInputEditorWindow::DrawLinkTab() {
         CVarCheckbox("ShipCrew: Two-Link Controller Pilot (Experimental)", CVAR_SETTING("ShipCrew.TwoLinkPilot"),
                      CheckboxOptions()
                          .Color(THEME_COLOR)
-                         .Tooltip("P2 input uses controller port 2 (Ivan tab). Left stick: walk/run.\\n"
-                                  "B while moving: roll. A is not used for jumping.\\n"
+                         .Tooltip("P2 input uses controller port 2 (Link (P2) tab). Left stick: walk/run.\\n"
+                                  "A while moving: roll. No manual jump. B sword combat is not ready.\\n"
                                   "C-Left: place a bomb. C-Right: throw a Deku Nut.\\n"
                                   "Bombs and nuts share the real save inventory and consume ammo.\\n"
                                   "New roll/item animations and gravity are experimental. No independent camera, "
                                   "combat or full interaction system yet. Test on a spare save."));
 
-        UpdateBitmaskToMappingIds(portIndex);
-        UpdateStickDirectionToMappingIds(portIndex);
+        DrawPortMappings(portIndex);
 
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.133f, 0.133f, 0.133f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
-
-        if (ImGui::CollapsingHeader("Buttons", NULL, ImGuiTreeNodeFlags_DefaultOpen)) {
-            DrawButtonLine("A", portIndex, BTN_A, CHIP_COLOR_N64_BLUE);
-            DrawButtonLine("B", portIndex, BTN_B, CHIP_COLOR_N64_GREEN);
-            DrawButtonLine("Start", portIndex, BTN_START, CHIP_COLOR_N64_RED);
-            DrawButtonLine("L", portIndex, BTN_L);
-            DrawButtonLine("R", portIndex, BTN_R);
-            DrawButtonLine("Z", portIndex, BTN_Z);
-            DrawButtonLine(StringHelper::Sprintf("C %s", ICON_FA_ARROW_UP).c_str(), portIndex, BTN_CUP,
-                           CHIP_COLOR_N64_YELLOW);
-            DrawButtonLine(StringHelper::Sprintf("C %s", ICON_FA_ARROW_DOWN).c_str(), portIndex, BTN_CDOWN,
-                           CHIP_COLOR_N64_YELLOW);
-            DrawButtonLine(StringHelper::Sprintf("C %s", ICON_FA_ARROW_LEFT).c_str(), portIndex, BTN_CLEFT,
-                           CHIP_COLOR_N64_YELLOW);
-            DrawButtonLine(StringHelper::Sprintf("C %s", ICON_FA_ARROW_RIGHT).c_str(), portIndex, BTN_CRIGHT,
-                           CHIP_COLOR_N64_YELLOW);
-        }
-
-        if (ImGui::CollapsingHeader("D-Pad", NULL, ImGuiTreeNodeFlags_DefaultOpen)) {
-            DrawButtonLine(StringHelper::Sprintf("D %s", ICON_FA_ARROW_UP).c_str(), portIndex, BTN_DUP);
-            DrawButtonLine(StringHelper::Sprintf("D %s", ICON_FA_ARROW_DOWN).c_str(), portIndex, BTN_DDOWN);
-            DrawButtonLine(StringHelper::Sprintf("D %s", ICON_FA_ARROW_LEFT).c_str(), portIndex, BTN_DLEFT);
-            DrawButtonLine(StringHelper::Sprintf("D %s", ICON_FA_ARROW_RIGHT).c_str(), portIndex, BTN_DRIGHT);
-        }
-
-        if (ImGui::CollapsingHeader("Analog Stick", NULL, ImGuiTreeNodeFlags_DefaultOpen)) {
-            DrawStickSection(portIndex, Ship::LEFT, 0);
-        }
-
-        if (ImGui::CollapsingHeader("Additional (\"Right\") Stick")) {
-            DrawStickSection(portIndex, Ship::RIGHT, 1, CHIP_COLOR_N64_YELLOW);
-        }
-
-        if (ImGui::CollapsingHeader("Rumble")) {
-            DrawRumbleSection(portIndex);
-        }
-
-        if (ImGui::CollapsingHeader("Gyro")) {
-            DrawGyroSection(portIndex);
-        }
-
-        if (ImGui::CollapsingHeader("LEDs")) {
-            DrawLEDSection(portIndex);
-        }
-
-        if (ImGui::CollapsingHeader("Modifier Buttons")) {
-            DrawButtonLine("M1", portIndex, BTN_CUSTOM_MODIFIER1);
-            DrawButtonLine("M2", portIndex, BTN_CUSTOM_MODIFIER2);
-        }
 
         if (ImGui::CollapsingHeader("Ocarina Controls")) {
             DrawOcarinaControlPanel();
@@ -1667,52 +1679,16 @@ void SohInputEditorWindow::DrawLinkTab() {
 }
 
 void SohInputEditorWindow::DrawIvanTab() {
-    if (CVarGetInteger(CVAR_DEVELOPER_TOOLS("DebugEnabled"), 0)) {
-        DrawDebugPortTab(1, "Ivan (P2)");
-        return;
-    }
-
     uint8_t portIndex = 1;
-    if (ImGui::BeginTabItem(StringHelper::Sprintf("Ivan (P2)###port%d", portIndex).c_str())) {
+    if (ImGui::BeginTabItem(StringHelper::Sprintf("Link (P2)###port%d", portIndex).c_str())) {
         DrawClearAllButton(portIndex);
         DrawSetDefaultsButton(portIndex);
         DrawDeviceToggles(portIndex);
 
-        UpdateBitmaskToMappingIds(portIndex);
-        UpdateStickDirectionToMappingIds(portIndex);
-
-        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.133f, 0.133f, 0.133f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
-
-        if (ImGui::CollapsingHeader("Buttons", NULL, ImGuiTreeNodeFlags_DefaultOpen)) {
-            DrawButtonLine("A", portIndex, BTN_A, CHIP_COLOR_N64_BLUE);
-            DrawButtonLine("B", portIndex, BTN_B, CHIP_COLOR_N64_GREEN);
-            DrawButtonLine("Z", portIndex, BTN_Z);
-            DrawButtonLine(StringHelper::Sprintf("C %s", ICON_FA_ARROW_UP).c_str(), portIndex, BTN_CUP,
-                           CHIP_COLOR_N64_YELLOW);
-            DrawButtonLine(StringHelper::Sprintf("C %s", ICON_FA_ARROW_DOWN).c_str(), portIndex, BTN_CDOWN,
-                           CHIP_COLOR_N64_YELLOW);
-            DrawButtonLine(StringHelper::Sprintf("C %s", ICON_FA_ARROW_LEFT).c_str(), portIndex, BTN_CLEFT,
-                           CHIP_COLOR_N64_YELLOW);
-            DrawButtonLine(StringHelper::Sprintf("C %s", ICON_FA_ARROW_RIGHT).c_str(), portIndex, BTN_CRIGHT,
-                           CHIP_COLOR_N64_YELLOW);
-        }
-
-        if (ImGui::CollapsingHeader("D-Pad", NULL, ImGuiTreeNodeFlags_DefaultOpen)) {
-            DrawButtonLine(StringHelper::Sprintf("%s", ICON_FA_ARROW_UP).c_str(), portIndex, BTN_DUP);
-            DrawButtonLine(StringHelper::Sprintf("%s", ICON_FA_ARROW_DOWN).c_str(), portIndex, BTN_DDOWN);
-            DrawButtonLine(StringHelper::Sprintf("%s", ICON_FA_ARROW_LEFT).c_str(), portIndex, BTN_DLEFT);
-            DrawButtonLine(StringHelper::Sprintf("%s", ICON_FA_ARROW_RIGHT).c_str(), portIndex, BTN_DRIGHT);
-        }
-
-        if (ImGui::CollapsingHeader("Analog Stick", NULL, ImGuiTreeNodeFlags_DefaultOpen)) {
-            DrawStickSection(portIndex, Ship::LEFT, 0);
-        }
-
-        ImGui::PopStyleColor();
-        ImGui::PopStyleColor();
-        ImGui::PopStyleColor();
+        ImGui::TextWrapped("ShipCrew P2 uses the same editable controller mappings as P1. "
+                           "Gameplay settings (camera, ocarina and global options) are still shared or "
+                           "P1-only until independent P2 gameplay/camera support is implemented.");
+        DrawPortMappings(portIndex);
         ImGui::EndTabItem();
     }
 }
