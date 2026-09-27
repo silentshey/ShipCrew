@@ -65,6 +65,7 @@ enum class PilotItemPose { None, BombPickup, BombThrow, Nut };
 struct PilotRuntime {
     Actor* actor = nullptr;
     Actor* heldBomb = nullptr;
+    Actor* lockedTarget = nullptr;
     // Derive rising edges from port 2's current buttons. Some controller
     // mappings can repeatedly report press bits while a button is held;
     // a button must become fully released before another item action.
@@ -85,6 +86,44 @@ struct PilotRuntime {
     PilotItemPose itemPose = PilotItemPose::None;
 };
 PilotRuntime sPilot;
+
+// Check retained targets against the live enemy list before dereferencing.
+bool Pilot_TargetIsLive(PlayState* play, Actor* target) {
+    if (target == nullptr)
+        return false;
+    for (Actor* a = play->actorCtx.actorLists[ACTORCAT_ENEMY].head; a != nullptr; a = a->next) {
+        if (a == target)
+            return a->update != nullptr;
+    }
+    return false;
+}
+
+// Front-facing candidate acquisition on Z press. No P1 targeting globals.
+Actor* Pilot_FindTarget(PlayState* play, Actor* pilot, Actor* exclude) {
+    Actor* best = nullptr;
+    f32 bestScore = 1.0e12f;
+    const f32 facing = static_cast<f32>(pilot->shape.rot.y) / kRadiansToN64Angle;
+    for (Actor* a = play->actorCtx.actorLists[ACTORCAT_ENEMY].head; a != nullptr; a = a->next) {
+        if (a == exclude || a->update == nullptr)
+            continue;
+        const f32 dx = a->world.pos.x - pilot->world.pos.x;
+        const f32 dy = a->world.pos.y - pilot->world.pos.y;
+        const f32 dz = a->world.pos.z - pilot->world.pos.z;
+        const f32 distSq = dx * dx + dy * dy + dz * dz;
+        const f32 horiz = std::sqrt(dx * dx + dz * dz);
+        if (distSq < 1.0f || distSq > 422500.0f || horiz < 1.0f)
+            continue;
+        const f32 dot = (dx * std::sin(facing) + dz * std::cos(facing)) / horiz;
+        if (dot < 0.1f)
+            continue;
+        const f32 score = distSq * (1.5f - dot);
+        if (score < bestScore) {
+            best = a;
+            bestScore = score;
+        }
+    }
+    return best;
+}
 
 LinkAnimationHeader* Pilot_Animation(const char* asset) {
     return reinterpret_cast<LinkAnimationHeader*>(const_cast<char*>(asset));
@@ -326,6 +365,12 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     }
     const bool wasGrounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
     const bool canAct = !Player_InBlockingCsMode(play, GET_PLAYER(play));
+    if (!Pilot_TargetIsLive(play, sPilot.lockedTarget))
+        sPilot.lockedTarget = nullptr;
+    if (canAct && (pressed & BTN_Z)) {
+        // Second press cycles to another visible enemy or releases lock.
+        sPilot.lockedTarget = Pilot_FindTarget(play, actor, sPilot.lockedTarget);
+    }
 
     Actor* heldBomb = Pilot_FindHeldBomb(actor, play);
     // The original action button releases a carried bomb first. Otherwise A
@@ -352,10 +397,18 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         }
         if (canAct && moving) {
             actor->world.rot.y = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
-            actor->shape.rot.y = actor->world.rot.y;
+            if (sPilot.lockedTarget == nullptr)
+                actor->shape.rot.y = actor->world.rot.y;
         }
     }
 
+    if (sPilot.lockedTarget != nullptr && sPilot.rollFrames == 0) {
+        const f32 dx = sPilot.lockedTarget->world.pos.x - actor->world.pos.x;
+        const f32 dz = sPilot.lockedTarget->world.pos.z - actor->world.pos.z;
+        if (dx * dx + dz * dz > 1.0f) {
+            actor->shape.rot.y = static_cast<s16>(std::atan2(dx, dz) * kRadiansToN64Angle);
+        }
+    }
     const bool fallingBeforeMove = actor->velocity.y < -1.0f;
     Actor_MoveXZGravity(actor);
     Actor_UpdateBgCheckInfo(play, actor, kWallCheckHeight, kWallCheckRadius, kCeilingCheckHeight, 0x1D);
@@ -537,6 +590,13 @@ static RegisterShipInitFunc sRegisterPilot(Pilot_RegisterHooks);
 
 // P2's independently allocated native camera is updated once AFTER the
 // engine's P1 camera, never during actor update or scene rendering.
+extern "C" Actor* ShipCrewCamera_GetSecondTarget(PlayState* play) {
+    if (play == nullptr || sPilot.actor == nullptr || FindPilotActor(play) != sPilot.actor ||
+        !Pilot_TargetIsLive(play, sPilot.lockedTarget))
+        return nullptr;
+    return sPilot.lockedTarget;
+}
+
 extern "C" Player* ShipCrewCamera_GetNativeSecondPlayer(PlayState* play) {
     if (play == nullptr || CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0 || CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) == 0 ||
         CVarGetInteger(CVAR_ENHANCEMENT("IvanCoopModeEnabled"), 0) != 0 || play->activeCamera != CAM_ID_MAIN ||
