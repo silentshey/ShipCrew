@@ -1572,9 +1572,10 @@ void SohInputEditorWindow::DrawLinkTab() {
         CVarCheckbox("ShipCrew: Two-Link Controller Pilot (Experimental)", CVAR_SETTING("ShipCrew.TwoLinkPilot"),
                      CheckboxOptions()
                          .Color(THEME_COLOR)
-                         .Tooltip("Spawns a visible second Link driven by controller port 2's left stick.\\n"
-                                  "Only independent position movement is implemented so far: no gravity, combat, "
-                                  "interactions, or P2 camera. Use a test save. Disable here to remove the pilot."));
+                         .Tooltip("P2 uses controller port 2, independently. Left stick: move.\\n"
+                                  "P2 A: experimental hop. Tests gravity, floor and world-wall collision.\\n"
+                                  "Combat, ledge climbing, actor interactions and independent camera are not ready. "
+                                  "Use a test save; disable here to remove the pilot."));
 
         UpdateBitmaskToMappingIds(portIndex);
         UpdateStickDirectionToMappingIds(portIndex);

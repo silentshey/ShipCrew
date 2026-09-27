@@ -1,6 +1,6 @@
 // Opt-in, deliberately limited first integration test for a second local Link.
-// Independent P2 movement and basic idle/run animation on P2's own skeleton.
-// This is not the final multiplayer actor/physics/camera architecture.
+// Independent P2 movement, empty-handed idle/run and experimental world physics.
+// This is not the final multiplayer actor/combat/camera architecture.
 
 #include <cmath>
 
@@ -31,6 +31,13 @@ namespace {
 constexpr f32 kMaxStickValue = 80.0f;
 constexpr f32 kMovementPerFrame = 3.0f;
 constexpr f32 kSpawnSeparation = 70.0f;
+constexpr f32 kPilotGravity = -1.0f;
+constexpr f32 kPilotTerminalVelocity = -18.0f;
+constexpr f32 kPilotHopVelocity = 8.0f;
+// World collisions only; player/NPC combat and interactions are later milestones.
+constexpr f32 kWallCheckHeight = 50.0f;
+constexpr f32 kWallCheckRadius = 22.0f;
+constexpr f32 kCeilingCheckHeight = 55.0f;
 constexpr f32 kRadiansToN64Angle = 32768.0f / 3.14159265358979323846f;
 
 bool sSpawningLocalPilot = false;
@@ -59,6 +66,8 @@ void Pilot_Init(Actor* actor, PlayState* play) {
     play->func_11D54(player, play);
     actor->flags |= ACTOR_FLAG_LOCK_ON_DISABLED;
     actor->colChkInfo.mass = MASS_IMMOVABLE;
+    actor->gravity = kPilotGravity;
+    actor->minVelocityY = kPilotTerminalVelocity;
 
     NameTag_RegisterForActorWithOptions(actor, "P2 PILOT", {});
 }
@@ -77,22 +86,32 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     const f32 x = static_cast<f32>(pad.stick_x) / kMaxStickValue;
     const f32 z = static_cast<f32>(pad.stick_y) / kMaxStickValue;
     const f32 length = std::sqrt(x * x + z * z);
-    if (length > 0.17f) {
-        const f32 speed = kMovementPerFrame * (length > 1.0f ? 1.0f : length);
-        const f32 dx = (x / length) * speed;
-        const f32 dz = (z / length) * speed;
-        actor->world.pos.x += dx;
-        actor->world.pos.z += dz;
-        actor->shape.rot.y = static_cast<s16>(std::atan2(dx, dz) * kRadiansToN64Angle);
-        actor->world.rot.y = actor->shape.rot.y;
+    const bool moving = length > 0.17f;
+    // Use the engine's actor movement so its background collision receives
+    // correct previous/current positions, instead of directly teleporting X/Z.
+    actor->speedXZ = moving ? kMovementPerFrame * (length > 1.0f ? 1.0f : length) : 0.0f;
+    if (moving) {
+        actor->world.rot.y = static_cast<s16>(std::atan2(x, z) * kRadiansToN64Angle);
+        actor->shape.rot.y = actor->world.rot.y;
     }
+
+    // This A-button hop only probes independent input, gravity and floor
+    // landing. It is NOT the game's eventual ledge auto-jump system.
+    if ((play->state.input[1].press.button & BTN_A) && (actor->bgCheckFlags & BGCHECKFLAG_GROUND)) {
+        actor->velocity.y = kPilotHopVelocity;
+        actor->bgCheckFlags &= ~BGCHECKFLAG_GROUND;
+    }
+    Actor_MoveXZGravity(actor);
+    // Regular engine checks: resolve world walls, ceilings and floor contact.
+    // Actor-vs-actor interaction and specialized Link ledge physics are separate.
+    Actor_UpdateBgCheckInfo(play, actor, kWallCheckHeight, kWallCheckRadius, kCeilingCheckHeight, 0x1D);
+    Actor_SetFocus(actor, 40.0f);
 
     // P2 has no independent item/equip actions yet: Player_UseItem(ITEM_NONE)
     // initializes the pilot's default model group with empty hands. Use the
     // corresponding free-arm loops, not the shield/weapon-ready animations.
     // This depends ONLY on P2 input and never mirrors P1's active animation.
     // Once P2 equipment exists, choose from the game's anim group/model type.
-    const bool moving = length > 0.17f;
     LinkAnimationHeader* animation = reinterpret_cast<LinkAnimationHeader*>(
         const_cast<char*>(moving ? gPlayerAnim_link_normal_run_free : gPlayerAnim_link_normal_wait_free));
     if (player->skelAnime.animation != animation) {
