@@ -44,6 +44,7 @@ s32 Camera_UpdateWater(Camera* camera);
 // not a second gameplay/cutscene pass or a duplicate copy of HUD settings.
 Player* ShipCrewCamera_GetNativeSecondPlayer(PlayState* play);
 Actor* ShipCrewCamera_GetSecondTarget(PlayState* play);
+s32 ShipCrewCamera_GetSecondParallel(PlayState* play);
 void ShipCrewCamera_SetNativeSecondView(PlayState* play, const Vec3f* eye, const Vec3f* at, const Vec3f* up, f32 fov);
 static s32 sShipCrewUpdatingNativeSecondCamera = false;
 
@@ -7864,7 +7865,11 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
                 p2Camera.target = target;
                 Camera_RequestModeImpl(&p2Camera, CAM_MODE_BATTLE, true);
             }
-        } else if (p2Camera.target != NULL) {
+        } else if (ShipCrewCamera_GetSecondParallel(play)) {
+            p2Camera.target = NULL;
+            if (p2Camera.mode != CAM_MODE_TARGET)
+                Camera_RequestModeImpl(&p2Camera, CAM_MODE_TARGET, true);
+        } else if (p2Camera.target != NULL || p2Camera.mode == CAM_MODE_BATTLE || p2Camera.mode == CAM_MODE_TARGET) {
             p2Camera.target = NULL;
             Camera_RequestModeImpl(&p2Camera, CAM_MODE_NORMAL, true);
         }

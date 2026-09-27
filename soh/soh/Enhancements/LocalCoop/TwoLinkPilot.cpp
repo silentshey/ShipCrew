@@ -66,6 +66,8 @@ struct PilotRuntime {
     Actor* actor = nullptr;
     Actor* heldBomb = nullptr;
     Actor* lockedTarget = nullptr;
+    bool parallelTargeting = false;
+    int parallelRecenterFrames = 0;
     // Derive rising edges from port 2's current buttons. Some controller
     // mappings can repeatedly report press bits while a button is held;
     // a button must become fully released before another item action.
@@ -365,11 +367,55 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     }
     const bool wasGrounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
     const bool canAct = !Player_InBlockingCsMode(play, GET_PLAYER(play));
+    // Match the save's native Hold/Switch Z-target preference. With no
+    // available target Z enters native Parallel mode and recenters P2's camera.
+    const bool holdTargeting = gSaveContext.zTargetSetting != 0;
+    const bool zHeld = (buttons & BTN_Z) != 0;
     if (!Pilot_TargetIsLive(play, sPilot.lockedTarget))
         sPilot.lockedTarget = nullptr;
-    if (canAct && (pressed & BTN_Z)) {
-        // Second press cycles to another visible enemy or releases lock.
-        sPilot.lockedTarget = Pilot_FindTarget(play, actor, sPilot.lockedTarget);
+    if (!canAct || (holdTargeting && !zHeld)) {
+        sPilot.lockedTarget = nullptr;
+        sPilot.parallelTargeting = false;
+        sPilot.parallelRecenterFrames = 0;
+    } else if (canAct && (pressed & BTN_Z)) {
+        Actor* next = Pilot_FindTarget(play, actor, sPilot.lockedTarget);
+        if (next != nullptr) {
+            sPilot.lockedTarget = next;
+            sPilot.parallelTargeting = false;
+            sPilot.parallelRecenterFrames = 0;
+        } else if (sPilot.lockedTarget != nullptr) {
+            // Switch mode toggles lock off when no other eligible actor exists.
+            // In hold mode, losing a target returns to parallel while held.
+            sPilot.lockedTarget = nullptr;
+            sPilot.parallelTargeting = holdTargeting;
+        } else {
+            sPilot.parallelTargeting = true;
+            sPilot.parallelRecenterFrames = 15;
+        }
+    }
+    if (sPilot.lockedTarget != nullptr) {
+        const f32 dx = sPilot.lockedTarget->world.pos.x - actor->world.pos.x;
+        const f32 dz = sPilot.lockedTarget->world.pos.z - actor->world.pos.z;
+        if (dx * dx + dz * dz > 1050.0f * 1050.0f) {
+            sPilot.lockedTarget = nullptr;
+            sPilot.parallelTargeting = holdTargeting && zHeld;
+        }
+    }
+    if (sPilot.parallelRecenterFrames > 0)
+        --sPilot.parallelRecenterFrames;
+    if (!zHeld && sPilot.parallelTargeting && (holdTargeting || sPilot.parallelRecenterFrames == 0))
+        sPilot.parallelTargeting = false;
+    if (sPilot.lockedTarget != nullptr) {
+        player->focusActor = sPilot.lockedTarget;
+        player->stateFlags1 |= PLAYER_STATE1_Z_TARGETING;
+        player->stateFlags1 &= ~PLAYER_STATE1_PARALLEL;
+    } else {
+        player->focusActor = nullptr;
+        player->stateFlags1 &= ~PLAYER_STATE1_Z_TARGETING;
+        if (sPilot.parallelTargeting)
+            player->stateFlags1 |= PLAYER_STATE1_PARALLEL;
+        else
+            player->stateFlags1 &= ~PLAYER_STATE1_PARALLEL;
     }
 
     Actor* heldBomb = Pilot_FindHeldBomb(actor, play);
@@ -590,6 +636,12 @@ static RegisterShipInitFunc sRegisterPilot(Pilot_RegisterHooks);
 
 // P2's independently allocated native camera is updated once AFTER the
 // engine's P1 camera, never during actor update or scene rendering.
+extern "C" s32 ShipCrewCamera_GetSecondParallel(PlayState* play) {
+    if (play == nullptr || sPilot.actor == nullptr || FindPilotActor(play) != sPilot.actor)
+        return false;
+    return sPilot.parallelTargeting;
+}
+
 extern "C" Actor* ShipCrewCamera_GetSecondTarget(PlayState* play) {
     if (play == nullptr || sPilot.actor == nullptr || FindPilotActor(play) != sPilot.actor ||
         !Pilot_TargetIsLive(play, sPilot.lockedTarget))

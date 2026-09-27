@@ -441,6 +441,12 @@ void Attention_Init(TargetContext* targetCtx, Actor* actor, PlayState* play) {
     Attention_InitReticle(targetCtx, actor->category, play);
 }
 
+// Independent local P2 reticle: use the same original triangle drawing code
+// for both targets, placing each in its own vertical split viewport.
+s32 ShipCrewCamera_GetSplitOverlayProjection(PlayState* play, MtxF* out);
+Actor* ShipCrewCamera_GetSecondTarget(PlayState* play);
+static s32 sShipCrewReticleSlot = 0; // 0 full, 1 P1 left, 2 P2 right
+
 void Attention_Draw(TargetContext* targetCtx, PlayState* play) {
     Actor* actor = targetCtx->targetedActor;
 
@@ -460,7 +466,7 @@ void Attention_Draw(TargetContext* targetCtx, PlayState* play) {
         f32 var2;
         s32 i;
 
-        FrameInterpolation_RecordOpenChild(actor, 0);
+        FrameInterpolation_RecordOpenChild(actor, sShipCrewReticleSlot == 2 ? 4 : 0);
         player = GET_PLAYER(play);
 
         spCE = 0xFF;
@@ -485,8 +491,15 @@ void Attention_Draw(TargetContext* targetCtx, PlayState* play) {
 
         Actor_ProjectPos(play, &targetCtx->targetCenterPos, &spBC, &spB4);
 
-        spBC.x = (160 * (spBC.x * spB4)) * var1;
+        // Overlay geometry uses a centered 320-wide coordinate plane.
+        // Project into each 160-wide half before applying the half's center.
+        spBC.x = ((sShipCrewReticleSlot != 0 ? 80.0f : 160.0f) * (spBC.x * spB4)) * var1;
         spBC.x = CLAMP(spBC.x, -320.0f, 320.0f);
+        if (sShipCrewReticleSlot == 1) {
+            spBC.x -= 80.0f;
+        } else if (sShipCrewReticleSlot == 2) {
+            spBC.x += 80.0f;
+        }
 
         spBC.y = (120 * (spBC.y * spB4)) * var1;
         spBC.y = CLAMP(spBC.y, -240.0f, 240.0f);
@@ -558,6 +571,44 @@ void Attention_Draw(TargetContext* targetCtx, PlayState* play) {
     }
 
     CLOSE_DISPS(play->state.gfxCtx);
+}
+
+// Called from the normal overlay pass, AFTER P2's 3D world pass cached
+// its view projection. Do not replace P1's global attention target context.
+void ShipCrewAttention_DrawSplit(PlayState* play) {
+    static TargetContext p2TargetCtx;
+    MtxF secondProjection;
+    MtxF savedProjection;
+    Actor* p2Target;
+
+    if (!ShipCrewCamera_GetSplitOverlayProjection(play, &secondProjection)) {
+        sShipCrewReticleSlot = 0;
+        Attention_Draw(&play->actorCtx.targetCtx, play);
+        return;
+    }
+
+    sShipCrewReticleSlot = 1;
+    Attention_Draw(&play->actorCtx.targetCtx, play);
+
+    p2Target = ShipCrewCamera_GetSecondTarget(play);
+    if (p2Target != NULL) {
+        if (p2TargetCtx.targetedActor != p2Target) {
+            memset(&p2TargetCtx, 0, sizeof(p2TargetCtx));
+            Attention_InitReticle(&p2TargetCtx, p2Target->category, play);
+            p2TargetCtx.targetedActor = p2Target;
+            p2TargetCtx.unk_4B = 1;
+            p2TargetCtx.unk_44 = 120.0f;
+        }
+        savedProjection = play->viewProjectionMtxF;
+        play->viewProjectionMtxF = secondProjection;
+        sShipCrewReticleSlot = 2;
+        Attention_Draw(&p2TargetCtx, play);
+        play->viewProjectionMtxF = savedProjection;
+    } else {
+        // Prevent target pointer reuse on enemy death or split mode changes.
+        memset(&p2TargetCtx, 0, sizeof(p2TargetCtx));
+    }
+    sShipCrewReticleSlot = 0;
 }
 
 void Attention_Update(TargetContext* targetCtx, Player* player, Actor* actorArg, PlayState* play) {
