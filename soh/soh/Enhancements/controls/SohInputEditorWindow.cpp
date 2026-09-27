@@ -1635,9 +1635,10 @@ void SohInputEditorWindow::DrawLinkTab() {
                      CheckboxOptions()
                          .Color(THEME_COLOR)
                          .Tooltip("P2 input uses controller port 2 (Link (P2) tab). Left stick: walk/run.\\n"
-                                  "A while moving: roll. No manual jump. B sword combat is not ready.\\n"
-                                  "C-Left: place a bomb. C-Right: throw a Deku Nut.\\n"
-                                  "Bombs and nuts share the real save inventory and consume ammo.\\n"
+                                  "A while moving: roll; no manual jump. Sword combat is not ready.\\n"
+                                  "C-Left: take out one bomb, then press A to place/throw it.\\n"
+                                  "C-Right: use one Deku Nut per separate press.\\n"
+                                  "Both share save ammo; buttons must be released before reuse.\\n"
                                   "New roll/item animations and gravity are experimental. No independent camera, "
                                   "combat or full interaction system yet. Test on a spare save."));
 
