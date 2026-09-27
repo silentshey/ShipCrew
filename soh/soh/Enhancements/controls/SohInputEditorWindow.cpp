@@ -1573,7 +1573,7 @@ void SohInputEditorWindow::DrawLinkTab() {
                      CheckboxOptions()
                          .Color(THEME_COLOR)
                          .Tooltip("P2 input uses controller port 2 (Ivan tab). Left stick: walk/run.\\n"
-                                  "A: experimental hop. B while moving: roll.\\n"
+                                  "B while moving: roll. A is not used for jumping.\\n"
                                   "C-Left: place a bomb. C-Right: throw a Deku Nut.\\n"
                                   "Bombs and nuts share the real save inventory and consume ammo.\\n"
                                   "New roll/item animations and gravity are experimental. No independent camera, "
