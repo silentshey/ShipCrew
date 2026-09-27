@@ -1,5 +1,4 @@
-// Standalone tests: g++ -std=c++20 -Wall -Wextra -Werror -I. \\
-//     tests/shipcrew_tunic_selection_test.cpp -o /tmp/shipcrew_tunic_test && /tmp/shipcrew_tunic_test
+// Compile standalone with: g++ -std=c++20 -Wall -Wextra -Werror -I. tests/shipcrew_tunic_selection_test.cpp -o tunic-selection-test
 #include "soh/soh/Enhancements/LocalCoop/TunicSelection.h"
 
 #include <cassert>
