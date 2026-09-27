@@ -1700,11 +1700,10 @@ void Play_Draw(PlayState* play) {
             // (unk_140 != 0) is drawn AFTER rooms, not in the earlier branch.
             // The secondary pass must reproduce that second draw too. Use
             // P2's own eye rather than the active (P1) camera eye.
-            if (((HREG(80) != 10) || (HREG(83) != 0)) && play->skyboxId &&
-                play->skyboxId != SKYBOX_UNSET_1D && !play->envCtx.skyboxDisabled &&
-                play->skyboxCtx.unk_140 != 0) {
-                SkyboxDraw_Draw(&play->skyboxCtx, gfxCtx, play->skyboxId, 0,
-                                play->view.eye.x, play->view.eye.y, play->view.eye.z);
+            if (((HREG(80) != 10) || (HREG(83) != 0)) && play->skyboxId && play->skyboxId != SKYBOX_UNSET_1D &&
+                !play->envCtx.skyboxDisabled && play->skyboxCtx.unk_140 != 0) {
+                SkyboxDraw_Draw(&play->skyboxCtx, gfxCtx, play->skyboxId, 0, play->view.eye.x, play->view.eye.y,
+                                play->view.eye.z);
             }
             Actor_DrawAll(play, &play->actorCtx);
             FrameInterpolation_RecordCloseChild();
