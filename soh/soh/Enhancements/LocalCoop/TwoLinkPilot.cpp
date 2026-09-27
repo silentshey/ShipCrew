@@ -87,13 +87,14 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         actor->world.rot.y = actor->shape.rot.y;
     }
 
-    // P2 owns its own animation and joint tables. Do NOT copy P1's pose: that
-    // makes both Links visually run/attack whenever P1 does, even with separate
-    // physical controller input. These are intentionally simple idle/run loops;
-    // full gameplay animation state and independent upper-body actions come later.
+    // P2 has no independent item/equip actions yet: Player_UseItem(ITEM_NONE)
+    // initializes the pilot's default model group with empty hands. Use the
+    // corresponding free-arm loops, not the shield/weapon-ready animations.
+    // This depends ONLY on P2 input and never mirrors P1's active animation.
+    // Once P2 equipment exists, choose from the game's anim group/model type.
     const bool moving = length > 0.17f;
     LinkAnimationHeader* animation = reinterpret_cast<LinkAnimationHeader*>(
-        const_cast<char*>(moving ? gPlayerAnim_link_normal_run : gPlayerAnim_link_normal_wait));
+        const_cast<char*>(moving ? gPlayerAnim_link_normal_run_free : gPlayerAnim_link_normal_wait_free));
     if (player->skelAnime.animation != animation) {
         LinkAnimation_Change(play, &player->skelAnime, animation, 1.0f, 0.0f, Animation_GetLastFrame(animation),
                              ANIMMODE_LOOP, -4.0f);
