@@ -158,7 +158,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     const bool wasGrounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
     const bool canAct = !Player_InBlockingCsMode(play, GET_PLAYER(play));
 
-    if (canAct && (pressed & BTN_B) && wasGrounded && moving && sPilot.rollFrames == 0 && sPilot.itemFrames == 0) {
+    // OoT-style action button: A rolls while running. No manual jump.\n    // Sword combat will eventually use B; this pilot does not yet implement it.\n    if (canAct && (pressed & BTN_A) && wasGrounded && moving && sPilot.rollFrames == 0 && sPilot.itemFrames == 0) {
         sPilot.rollFrames = kRollFrames;
         sPilot.landingFrames = 0;
     }
