@@ -29,6 +29,8 @@ f32 ShipCrewPlayer_GetRunSpeedLimit(void);
 void ShipCrewPlayer_ApplyNativeRunMotion(Player* player, f32 speedTarget, s16 yawTarget);
 f32 ShipCrewPlayer_CalcGroundSpeedTarget(f32 magnitude, f32 speedCap, s16 floorPitch, s32 curved);
 s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* rise, Vec3f* stand, s16* facing);
+s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec3f* anchor, s16* facing,
+                               f32* bottomY, f32* topY);
 }
 
 // The experimental switch lives in the existing Controls settings screen.
@@ -72,6 +74,7 @@ bool sRenderingSecondCamera = false;
 // runtime into the common per-player component keyed by local player slot.
 enum class PilotItemPose { None, BombPickup, BombThrow, Nut };
 enum class PilotTraversal { None, AutoJump, HighStepWindup, Hanging, Climbing };
+enum class PilotLadder { None, EnterBottom, EnterTop, Active, DismountBottom, DismountTop };
 enum class PilotLockMove { None, Forward, Back, Left, Right };
 struct PilotRuntime {
     Actor* actor = nullptr;
@@ -101,6 +104,15 @@ struct PilotRuntime {
     Vec3f ledgeStand = {};
     s16 ledgeFacing = 0;
     PilotTraversal traversal = PilotTraversal::None;
+    PilotLadder ladder = PilotLadder::None;
+    int ladderStep = 0;
+    int ladderDirection = 0;
+    int ladderCooldown = 0;
+    Vec3f ladderAnchor = {};
+    Vec3f ladderTopEntry = {};
+    s16 ladderYaw = 0;
+    f32 ladderTopY = 0.0f;
+    f32 ladderBottomY = 0.0f;
     int itemFrames = 0;
     // Track shared ammo between P2 updates. A changed value outside a P2
     // item transaction comes from P1, a save edit, or an external sync.
