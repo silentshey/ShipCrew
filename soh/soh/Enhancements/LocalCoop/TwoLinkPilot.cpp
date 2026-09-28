@@ -84,6 +84,7 @@ struct PilotRuntime {
     PilotLockMove lockMove = PilotLockMove::None;
     bool parallelTargeting = false;
     int parallelRecenterFrames = 0;
+    s16 parallelFacing = 0; // Independent P2 no-enemy Z facing, never P1's global parallelYaw.
     // Derive rising edges from port 2's current buttons. Some controller
     // mappings can repeatedly report press bits while a button is held;
     // a button must become fully released before another item action.
@@ -875,6 +876,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             sPilot.parallelTargeting = holdTargeting;
         } else {
             sPilot.parallelTargeting = true;
+            sPilot.parallelFacing = actor->shape.rot.y;
             sPilot.parallelRecenterFrames = 15;
         }
     }
@@ -939,10 +941,13 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     } else if (canAct && (pressed & BTN_A) && heldBomb == nullptr && wasGrounded && moving && sPilot.rollFrames == 0 &&
                sPilot.itemFrames == 0 && sPilot.dodge == PilotDodge::None) {
         PilotDodge dodge = PilotDodge::None;
-        if (nativeMovement && sPilot.lockedTarget != nullptr) {
-            const Vec3f& focus = sPilot.lockedTarget->focus.pos;
-            const s16 facing = static_cast<s16>(std::atan2(focus.x - actor->world.pos.x, focus.z - actor->world.pos.z) *
-                                                kRadiansToN64Angle);
+        if (nativeMovement && (sPilot.lockedTarget != nullptr || sPilot.parallelTargeting)) {
+            const s16 facing = sPilot.lockedTarget != nullptr
+                                   ? static_cast<s16>(
+                                         std::atan2(sPilot.lockedTarget->focus.pos.x - actor->world.pos.x,
+                                                    sPilot.lockedTarget->focus.pos.z - actor->world.pos.z) *
+                                         kRadiansToN64Angle)
+                                   : sPilot.parallelFacing;
             const f32 forward = worldX * Math_SinS(facing) + worldZ * Math_CosS(facing);
             const f32 right = worldZ * Math_SinS(facing) - worldX * Math_CosS(facing);
             if (std::fabs(right) > std::fabs(forward) * 1.2f)
@@ -1000,7 +1005,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     // animation from a smoothed movement yaw (it can lag behind the stick).
     sPilot.lockMove = PilotLockMove::None;
     const bool hostileLock = sPilot.lockedTarget != nullptr;
-    s16 targetFacing = actor->shape.rot.y;
+    const bool zMovement = hostileLock || sPilot.parallelTargeting;
+    s16 targetFacing = sPilot.parallelTargeting ? sPilot.parallelFacing : actor->shape.rot.y;
     if (hostileLock) {
         const Vec3f& focus = sPilot.lockedTarget->focus.pos;
         const f32 targetX = focus.x - actor->world.pos.x;
@@ -1008,8 +1014,10 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         if (targetX * targetX + targetZ * targetZ > 1.0f) {
             targetFacing = static_cast<s16>(std::atan2(targetX, targetZ) * kRadiansToN64Angle);
         }
+    }
+    if (zMovement) {
         if (canAct && moving) {
-            // Relative to the enemy, not to P1's camera and not to the
+            // Relative to P2's enemy or independent Z-parallel facing, never P1's camera and not to the
             // delayed velocity heading. This stays stable as the battle
             // camera circles the target and handles diagonal movement.
             const f32 sine = Math_SinS(targetFacing);
@@ -1046,7 +1054,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         player->unk_880 = speedLimit;
         const f32 nativeTarget =
             canAct && moving ? ShipCrewPlayer_CalcGroundSpeedTarget(stickMagnitude, speedLimit, player->floorPitch,
-                                                                    !hostileLock && !sPilot.parallelTargeting)
+                                                                    !zMovement)
                              : 0.0f;
         if (sPilot.dodge != PilotDodge::None) {
             player->yaw = actor->world.rot.y = sPilot.dodgeYaw;
@@ -1079,7 +1087,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         } else {
             const s16 desiredYaw = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
             const s16 yawDiff = desiredYaw - player->yaw;
-            if (hostileLock) {
+            if (zMovement) {
                 // Native Link selects separate side/back locomotion states.
                 // Do not run the ordinary >90-degree turn brake here: that
                 // prevented lateral motion as the camera turned in battle.
@@ -1100,7 +1108,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             actor->speedXZ = std::max(player->linearVelocity, 0.0f);
             actor->world.rot.y = player->yaw;
         }
-        if (!hostileLock)
+        if (!zMovement)
             actor->shape.rot.y = actor->world.rot.y;
     } else if (sPilot.rollFrames > 0) {
         actor->speedXZ = kRollSpeed;
@@ -1112,13 +1120,20 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         }
         if (canAct && moving) {
             actor->world.rot.y = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
-            if (!hostileLock)
+            if (!zMovement)
                 actor->shape.rot.y = actor->world.rot.y;
         }
     }
 
-    if (hostileLock && sPilot.rollFrames == 0) {
+    if (zMovement && sPilot.rollFrames == 0 && sPilot.dodge == PilotDodge::None) {
         actor->shape.rot.y = targetFacing;
+    }
+    // Player 1 can attach to the ladder at a platform lip before its
+    // ground-leave physics step. P2 previously tested only after falling.
+    if (nativeTraversal && wasGrounded &&
+        Pilot_TryLadder(player, play, pad, nativeTraversal, canAct, moving, heldBomb != nullptr)) {
+        Actor_SetFocus(actor, 40.0f);
+        return;
     }
     const bool fallingBeforeMove = actor->velocity.y < -1.0f;
     Actor_MoveXZGravity(actor);
@@ -1143,7 +1158,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     }
     if (wasGrounded && !(actor->bgCheckFlags & BGCHECKFLAG_GROUND))
         sPilot.takeoffY = actor->world.pos.y;
-    if (Pilot_TryLadder(player, play, pad, nativeTraversal, canAct, moving,
+    if (!wasGrounded &&
+        Pilot_TryLadder(player, play, pad, nativeTraversal, canAct, moving,
                         Pilot_FindHeldBomb(actor, play) != nullptr)) {
         Actor_SetFocus(actor, 40.0f);
         sPilot.lastObservedBombAmmo = AMMO(ITEM_BOMB);
@@ -1243,7 +1259,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                                                                                        : PLAYER_ANIMGROUP_short_landing)
                                    : Pilot_Animation(gPlayerAnim_link_normal_short_landing_free);
         mode = ANIMMODE_ONCE;
-    } else if (hostileLock) {
+    } else if (zMovement) {
         // The animation must follow the independent motion quadrant chosen
         // from the target-relative stick vector. Comparing smoothed yaw with
         // actor facing gave the wrong side (or a forward run) after camera
@@ -1269,22 +1285,9 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             locomotionLoop = true;
         }
     } else if (nativeMovement) {
-        if (!moving || actor->speedXZ < 0.15f) {
+        if (!moving || actor->speedXZ < 0.15f)
             animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_wait);
-        } else if (sPilot.parallelTargeting) {
-            const s16 facingDiff = player->yaw - actor->shape.rot.y;
-            if (std::abs(static_cast<s32>(facingDiff)) >= 0x6000) {
-                animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_back_walk);
-            } else if (facingDiff > 0x2000) {
-                animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_side_walkR);
-            } else if (facingDiff < -0x2000) {
-                animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_side_walkL);
-            } else {
-                animation =
-                    ShipCrewPlayer_GetGroupAnimation(player, running ? PLAYER_ANIMGROUP_run : PLAYER_ANIMGROUP_walk);
-            }
-            locomotionLoop = true;
-        } else {
+        else {
             animation =
                 ShipCrewPlayer_GetGroupAnimation(player, running ? PLAYER_ANIMGROUP_run : PLAYER_ANIMGROUP_walk);
             locomotionLoop = true;
