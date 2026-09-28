@@ -1502,8 +1502,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         // dropping below takeoff height or colliding with a wall. P2 used to
         // flip immediately at velocity.y < 0, making it LOOK like gravity
         // suddenly accelerated even when its physical velocity was normal.
-        if (nativeTraversal && sPilot.traversal == PilotTraversal::AutoJump &&
-            sPilot.nativeAutoJumpAnim != nullptr) {
+        if (nativeTraversal && sPilot.traversal == PilotTraversal::AutoJump && sPilot.nativeAutoJumpAnim != nullptr) {
             const f32 fallDistance = sPilot.takeoffY - actor->world.pos.y;
             if (ShipCrewPlayer_ShouldEnterFallAnimation(player, false, fallDistance)) {
                 animation = Pilot_Animation(gPlayerAnim_link_normal_landing);
@@ -1584,9 +1583,9 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     }
 
     if (player->skelAnime.animation != animation) {
-        const bool nativeFrozenFallPose =
-            nativeTraversal && !grounded && sPilot.traversal == PilotTraversal::AutoJump &&
-            animation == Pilot_Animation(gPlayerAnim_link_normal_landing);
+        const bool nativeFrozenFallPose = nativeTraversal && !grounded &&
+                                          sPilot.traversal == PilotTraversal::AutoJump &&
+                                          animation == Pilot_Animation(gPlayerAnim_link_normal_landing);
         // P1 enters its falling pose using start=end=0 with an 8-frame
         // transition; playing the entire landing animation mid-air is wrong.
         LinkAnimation_Change(play, &player->skelAnime, animation, 1.0f, 0.0f,
