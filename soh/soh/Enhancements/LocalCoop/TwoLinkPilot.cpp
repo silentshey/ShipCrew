@@ -184,6 +184,7 @@ void Pilot_BeginClimb(Player* player, PlayState* play, s32 type, bool fromHang) 
 
     const f32 rise = fromHang ? sPilot.ledgeRise : sPilot.ledgeStand.y - actor->world.pos.y;
     actor->world.pos = sPilot.ledgeStand;
+    actor->prevPos = actor->world.pos; // Climb starts at the destination with a visual vertical offset.
     actor->velocity.y = 0.0f;
     actor->speedXZ = player->linearVelocity = 0.0f;
     actor->gravity = 0.0f;
@@ -231,6 +232,7 @@ void Pilot_BeginHang(Player* player, PlayState* play, f32 rise, const Vec3f& sta
     sPilot.traversal = PilotTraversal::Hanging;
     sPilot.ledgeCooldownFrames = 12;
     actor->world.pos = stand;
+    actor->prevPos = actor->world.pos; // Do not interpolate across a newly grabbed ledge.
     actor->shape.rot.y = actor->world.rot.y = player->yaw = facing;
     actor->velocity.y = actor->speedXZ = player->linearVelocity = 0.0f;
     actor->gravity = 0.0f;
@@ -289,8 +291,12 @@ bool Pilot_UpdateTraversal(Player* player, PlayState* play, const OSContPad& pad
         }
     } else if (sPilot.traversal == PilotTraversal::Climbing) {
         const bool finished = LinkAnimation_Update(play, &player->skelAnime) != 0;
-        if (player->skelAnime.curFrame > 5.0f)
-            Math_StepToF(&actor->shape.yOffset, 0.0f, 150.0f);
+        if (player->skelAnime.curFrame > 5.0f) {
+            // Resolve the entire temporary visual climb offset by the end
+            // of the native animation instead of snapping thousands of units.
+            const f32 framesLeft = std::max(1.0f, player->skelAnime.endFrame - player->skelAnime.curFrame);
+            Math_StepToF(&actor->shape.yOffset, 0.0f, std::max(150.0f, std::fabs(actor->shape.yOffset) / framesLeft));
+        }
         if (finished) {
             Pilot_ClearTraversal(actor, player);
             sPilot.landingFrames = kLandingFrames;
@@ -332,6 +338,7 @@ void Pilot_BeginLadder(Player* player, PlayState* play, bool fromTop, const Vec3
     sPilot.ladderDirection = 0;
     actor->world.pos.x = anchor.x;
     actor->world.pos.z = anchor.z;
+    actor->prevPos = actor->world.pos; // Ladder attachment is an explicit position correction.
     actor->velocity.y = actor->speedXZ = player->linearVelocity = 0.0f;
     actor->gravity = 0.0f;
     actor->world.rot.y = actor->shape.rot.y = player->yaw = yaw;
@@ -345,6 +352,7 @@ void Pilot_BeginLadder(Player* player, PlayState* play, bool fromTop, const Vec3
 void Pilot_LadderDismount(Player* player, PlayState* play, bool atTop, const Vec3f& landing) {
     Actor* actor = &player->actor;
     actor->world.pos = landing;
+    actor->prevPos = actor->world.pos; // Prevent visual rewind after top/bottom dismount.
     actor->velocity.y = actor->speedXZ = player->linearVelocity = 0.0f;
     actor->gravity = 0.0f;
     actor->bgCheckFlags |= BGCHECKFLAG_GROUND;
