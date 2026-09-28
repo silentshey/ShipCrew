@@ -45,6 +45,7 @@ s32 Camera_UpdateWater(Camera* camera);
 Player* ShipCrewCamera_GetNativeSecondPlayer(PlayState* play);
 Actor* ShipCrewCamera_GetSecondTarget(PlayState* play);
 s32 ShipCrewCamera_GetSecondParallel(PlayState* play);
+s32 ShipCrewPilot_GetCrawlExitCamera(PlayState* play, s32* forward, f32* progress);
 void ShipCrewCamera_SetNativeSecondView(PlayState* play, const Vec3f* eye, const Vec3f* at, const Vec3f* up, f32 fov);
 static s32 sShipCrewUpdatingNativeSecondCamera = false;
 
@@ -7802,6 +7803,7 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
     static Camera p2Camera;
     static PlayState* p2Play = NULL;
     static Player* p2Player = NULL;
+    static f32 p2CrawlExitBlend = 0.0f;
     Player* player;
     View originalView;
     s32 originalOOBTimer;
@@ -7813,12 +7815,14 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
     if (play == NULL || gDbgCamEnabled) {
         p2Play = NULL;
         p2Player = NULL;
+        p2CrawlExitBlend = 0.0f;
         return;
     }
     player = ShipCrewCamera_GetNativeSecondPlayer(play);
     if (player == NULL || play->cameraPtrs[CAM_ID_MAIN] == NULL || play->mainCamera.status != CAM_STAT_ACTIVE) {
         p2Play = NULL;
         p2Player = NULL;
+        p2CrawlExitBlend = 0.0f;
         return;
     }
 
@@ -7837,6 +7841,7 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
         // own character. The normal game room-setting routine is deliberately
         // allowed for this one secondary camera, not for cutscene subcameras.
         p2Camera = play->mainCamera;
+        p2CrawlExitBlend = 0.0f;
         p2Camera.play = play;
         p2Camera.player = player;
         p2Camera.target = NULL;
@@ -7879,6 +7884,45 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
     // Cutscene/scripted settings still belong to P1; the secondary camera
     // stays in the independently initialized normal/dungeon room setting.
     Camera_Update(&p2Camera);
+
+    // P1's native one-point 9601/9602 exit cutscenes use a close camera
+    // moving from local (0,9,+/-45) to (0,62,+/-119), while tracking the
+    // player's focus from y=4 to y=34. The second Camera is deliberately
+    // outside play->cameraPtrs, so starting P1's global OnePointCutscene
+    // would hijack both controllers. Reuse the original path endpoints for
+    // an isolated, smoothly blended P2-only presentation instead.
+    {
+        s32 exitForward;
+        f32 exitProgress;
+        const s32 exiting = ShipCrewPilot_GetCrawlExitCamera(play, &exitForward, &exitProgress);
+        if (exiting)
+            p2CrawlExitBlend = CLAMP(p2CrawlExitBlend + 0.2f, 0.0f, 1.0f);
+        else
+            p2CrawlExitBlend = CLAMP(p2CrawlExitBlend - 0.2f, 0.0f, 1.0f);
+        if (p2CrawlExitBlend > 0.0f) {
+            if (!exiting)
+                exitProgress = 1.0f;
+            // Use the ORIGINAL relative one-point offsets, sampled for this
+            // player's exit clip. No shared subcamera, time or save changes.
+            const f32 localZ = (exitForward ? 1.0f : -1.0f) * (45.0f + 74.0f * exitProgress);
+            const f32 sinYaw = Math_SinS(player->actor.shape.rot.y);
+            const f32 cosYaw = Math_CosS(player->actor.shape.rot.y);
+            Vec3f crawlAt = player->actor.world.pos;
+            Vec3f crawlEye = crawlAt;
+            crawlAt.y += 4.0f + 30.0f * exitProgress;
+            crawlEye.x += sinYaw * localZ;
+            crawlEye.y += 9.0f + 53.0f * exitProgress;
+            crawlEye.z += cosYaw * localZ;
+            const f32 mix = p2CrawlExitBlend;
+            play->view.eye.x += (crawlEye.x - play->view.eye.x) * mix;
+            play->view.eye.y += (crawlEye.y - play->view.eye.y) * mix;
+            play->view.eye.z += (crawlEye.z - play->view.eye.z) * mix;
+            play->view.lookAt.x += (crawlAt.x - play->view.lookAt.x) * mix;
+            play->view.lookAt.y += (crawlAt.y - play->view.lookAt.y) * mix;
+            play->view.lookAt.z += (crawlAt.z - play->view.lookAt.z) * mix;
+            play->view.fovy += ((40.0f + 20.0f * exitProgress) - play->view.fovy) * mix;
+        }
+    }
 
     // Camera_Update writes the rendered eye/at/up/fov into play->view.
     // Capture that output BEFORE restoring P1's global renderer state.
