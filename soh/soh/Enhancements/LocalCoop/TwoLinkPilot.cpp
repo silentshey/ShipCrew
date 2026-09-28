@@ -25,6 +25,7 @@ void Player_UseItem(PlayState* play, Player* player, s32 item);
 void Player_Draw(Actor* actor, PlayState* play);
 LinkAnimationHeader* ShipCrewPlayer_GetGroupAnimation(Player* player, s32 group);
 f32 ShipCrewPlayer_GetRunSpeedLimit(void);
+void ShipCrewPlayer_ApplyNativeRunMotion(Player* player, f32 speedTarget, s16 yawTarget);
 f32 ShipCrewPlayer_CalcGroundSpeedTarget(f32 magnitude, f32 speedCap, s16 floorPitch, s32 curved);
 s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* rise, Vec3f* stand, s16* facing);
 }
@@ -70,10 +71,12 @@ bool sRenderingSecondCamera = false;
 // runtime into the common per-player component keyed by local player slot.
 enum class PilotItemPose { None, BombPickup, BombThrow, Nut };
 enum class PilotTraversal { None, AutoJump, HighStepWindup, Hanging, Climbing };
+enum class PilotLockMove { None, Forward, Back, Left, Right };
 struct PilotRuntime {
     Actor* actor = nullptr;
     Actor* heldBomb = nullptr;
     Actor* lockedTarget = nullptr;
+    PilotLockMove lockMove = PilotLockMove::None;
     bool parallelTargeting = false;
     int parallelRecenterFrames = 0;
     // Derive rising edges from port 2's current buttons. Some controller
@@ -717,9 +720,41 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         sPilot.landingFrames = 0;
     }
 
-    // The opt-in path uses Link's original analog speed curve, dynamic run
-    // limit, asymmetrical acceleration, turning brake and age-specific
-    // collision dimensions. The original tested pilot remains a fallback.
+    // Two independent yaws are essential for native Z movement: world/yaw
+    // controls travel, while shape faces the target. Do not infer a strafe
+    // animation from a smoothed movement yaw (it can lag behind the stick).
+    sPilot.lockMove = PilotLockMove::None;
+    const bool hostileLock = sPilot.lockedTarget != nullptr;
+    s16 targetFacing = actor->shape.rot.y;
+    if (hostileLock) {
+        const Vec3f& focus = sPilot.lockedTarget->focus.pos;
+        const f32 targetX = focus.x - actor->world.pos.x;
+        const f32 targetZ = focus.z - actor->world.pos.z;
+        if (targetX * targetX + targetZ * targetZ > 1.0f) {
+            targetFacing = static_cast<s16>(std::atan2(targetX, targetZ) * kRadiansToN64Angle);
+        }
+        if (canAct && moving) {
+            // Relative to the enemy, not to P1's camera and not to the
+            // delayed velocity heading. This stays stable as the battle
+            // camera circles the target and handles diagonal movement.
+            const f32 sine = Math_SinS(targetFacing);
+            const f32 cosine = Math_CosS(targetFacing);
+            const f32 forward = worldX * sine + worldZ * cosine;
+            const f32 right = worldX * cosine - worldZ * sine;
+            if (std::fabs(right) > std::fabs(forward) * 0.75f) {
+                sPilot.lockMove = right > 0.0f ? PilotLockMove::Right : PilotLockMove::Left;
+            } else if (forward < -0.25f) {
+                sPilot.lockMove = PilotLockMove::Back;
+            } else {
+                sPilot.lockMove = PilotLockMove::Forward;
+            }
+        }
+    }
+
+    // Native straight running uses the ORIGINAL P1 func_8083DF68: REG(19)
+    // acceleration, 1.5 braking and REG(27) turning. The previous pilot
+    // incorrectly multiplied even full-speed normal running by 0.9 or 0.4,
+    // causing visible speed disparity with P1.
     const f32 requestedSpeed = canAct && moving ? kRunSpeed * std::min(inputLength, 1.0f) : 0.0f;
     if (nativeMovement) {
         const f32 nativeLimit = ShipCrewPlayer_GetRunSpeedLimit();
@@ -735,36 +770,43 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         const f32 nativeTarget =
             canAct && moving
                 ? ShipCrewPlayer_CalcGroundSpeedTarget(stickMagnitude, speedLimit, player->floorPitch,
-                                                       sPilot.lockedTarget == nullptr && !sPilot.parallelTargeting)
+                                                       !hostileLock && !sPilot.parallelTargeting)
                 : 0.0f;
         if (sPilot.rollFrames > 0) {
             actor->speedXZ = sPilot.rollSpeed;
             actor->world.rot.y = sPilot.rollYaw;
             player->linearVelocity = sPilot.rollSpeed;
             player->yaw = sPilot.rollYaw;
+        } else if (!canAct || !moving) {
+            // Vanilla standing uses the boot-dependent idle deceleration.
+            Math_StepToF(&player->linearVelocity, 0.0f, REG(43) / 100.0f);
+            actor->speedXZ = std::max(player->linearVelocity, 0.0f);
+            actor->world.rot.y = player->yaw;
         } else {
             const s16 desiredYaw = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
             const s16 yawDiff = desiredYaw - player->yaw;
-            const bool brakingTurn = canAct && moving && wasGrounded && std::abs(static_cast<s32>(yawDiff)) > 0x4000;
-            f32 motionTarget = nativeTarget;
-            if (brakingTurn) {
-                motionTarget = 0.0f;
-                if (Math_StepToF(&player->linearVelocity, 0.0f, 1.5f))
+            if (hostileLock) {
+                // Native Link selects separate side/back locomotion states.
+                // Do not run the ordinary >90-degree turn brake here: that
+                // prevented lateral motion as the camera turned in battle.
+                player->yaw = desiredYaw;
+                if (sPilot.lockMove == PilotLockMove::Back) {
+                    Math_AsymStepToF(&player->linearVelocity, nativeTarget * 1.5f, 1.5f, 2.0f);
+                } else if (sPilot.lockMove == PilotLockMove::Left || sPilot.lockMove == PilotLockMove::Right) {
+                    Math_AsymStepToF(&player->linearVelocity, nativeTarget * 0.9f, 2.0f, 3.0f);
+                } else {
+                    ShipCrewPlayer_ApplyNativeRunMotion(player, nativeTarget, desiredYaw);
+                }
+            } else if (wasGrounded && std::abs(static_cast<s32>(yawDiff)) > 0x6000) {
+                if (Math_StepToF(&player->linearVelocity, 0.0f, 1.0f))
                     player->yaw = desiredYaw;
             } else {
-                if (canAct && moving)
-                    Math_ScaledStepToS(&player->yaw, desiredYaw,
-                                       static_cast<s16>(std::abs(static_cast<s32>(yawDiff)) * 0.1f));
-                // OoT's grounded walking and running states use distinct
-                // speed multipliers and asymmetric speed steps.
-                const bool running = motionTarget > 4.9f;
-                motionTarget *= running ? 0.9f : 0.4f;
-                Math_AsymStepToF(&player->linearVelocity, motionTarget, running ? 2.0f : 1.5f, running ? 3.0f : 1.5f);
+                ShipCrewPlayer_ApplyNativeRunMotion(player, nativeTarget, desiredYaw);
             }
             actor->speedXZ = std::max(player->linearVelocity, 0.0f);
             actor->world.rot.y = player->yaw;
         }
-        if (sPilot.lockedTarget == nullptr)
+        if (!hostileLock)
             actor->shape.rot.y = actor->world.rot.y;
     } else if (sPilot.rollFrames > 0) {
         actor->speedXZ = kRollSpeed;
@@ -776,17 +818,13 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         }
         if (canAct && moving) {
             actor->world.rot.y = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
-            if (sPilot.lockedTarget == nullptr)
+            if (!hostileLock)
                 actor->shape.rot.y = actor->world.rot.y;
         }
     }
 
-    if (sPilot.lockedTarget != nullptr && sPilot.rollFrames == 0) {
-        const f32 dx = sPilot.lockedTarget->world.pos.x - actor->world.pos.x;
-        const f32 dz = sPilot.lockedTarget->world.pos.z - actor->world.pos.z;
-        if (dx * dx + dz * dz > 1.0f) {
-            actor->shape.rot.y = static_cast<s16>(std::atan2(dx, dz) * kRadiansToN64Angle);
-        }
+    if (hostileLock && sPilot.rollFrames == 0) {
+        actor->shape.rot.y = targetFacing;
     }
     const bool fallingBeforeMove = actor->velocity.y < -1.0f;
     Actor_MoveXZGravity(actor);
