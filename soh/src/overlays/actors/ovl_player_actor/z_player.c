@@ -5515,9 +5515,9 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
             end.z += dz * (radius + 16.0f);
         }
         s32 found = BgCheck_EntityLineTest1(&play->colCtx, &start, &end, &hit, &wall, true, false, false, true, &bgId);
-        if (fromTop && (!found || wall == NULL ||
-                        !(SurfaceType_GetWallFlags(&play->colCtx, wall, bgId) &
-                          (WALL_FLAG_LADDER | WALL_FLAG_LADDER_TOP)))) {
+        if (fromTop &&
+            (!found || wall == NULL ||
+             !(SurfaceType_GetWallFlags(&play->colCtx, wall, bgId) & (WALL_FLAG_LADDER | WALL_FLAG_LADDER_TOP)))) {
             // P1 attaches to the tagged wall/top collision at the lip.
             // A single diagonal ray easily misses narrow ladder-top
             // polygons, particularly before the player's feet leave ground.
@@ -5577,8 +5577,7 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
         // tagged wall, while bottom entry (climb_startA) faces INTO it.
         // Giving both the same yaw made top descent immediately act like
         // bottom ascent and sent upper-platform dismount probes backward.
-        const s16 towardWall =
-            side > 0.0f ? (s16)(Math_Atan2S(nz, nx) + 0x8000) : Math_Atan2S(nz, nx);
+        const s16 towardWall = side > 0.0f ? (s16)(Math_Atan2S(nz, nx) + 0x8000) : Math_Atan2S(nz, nx);
         *outFacing = fromTop ? (s16)(towardWall + 0x8000) : towardWall;
         *outTopY = fromTop ? pos.y : maxY;
         *outBottomY = fromTop ? minY : pos.y;
