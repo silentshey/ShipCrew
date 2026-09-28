@@ -455,7 +455,7 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, const OSContPad& pad, b
             // climbing assets. The separate pilot currently owns position,
             // so reproduce that translation without Player_StartAnimMovement
             // (which would mutate P1-only action globals).
-            const f32 cycle = std::max(1.0f, Animation_GetLastFrame(player->skelAnime.animation));
+            const f32 cycle = std::max(1.0f, static_cast<f32>(Animation_GetLastFrame(player->skelAnime.animation)));
             // P1's native ladder is a roughly 15-unit root-motion step per
             // animation cycle, not the pilot's arbitrary 1.45 units/frame.
             // Scale displacement with animation playback, including reverse.
