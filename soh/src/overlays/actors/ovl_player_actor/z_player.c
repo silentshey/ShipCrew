@@ -5501,10 +5501,39 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
             end.x += dx * (radius + 16.0f);
             end.z += dz * (radius + 16.0f);
         }
-        if (!BgCheck_EntityLineTest1(&play->colCtx, &start, &end, &hit, &wall, true, false, false, true, &bgId) ||
-            wall == NULL) {
-            continue;
+        s32 found = BgCheck_EntityLineTest1(&play->colCtx, &start, &end, &hit, &wall, true, false, false, true, &bgId);
+        if (fromTop && (!found || wall == NULL)) {
+            // P1 attaches to the tagged wall/top collision at the lip.
+            // A single diagonal ray easily misses narrow ladder-top
+            // polygons, particularly before the player's feet leave ground.
+            // Probe across the lip again from a lower starting height.
+            start = pos;
+            start.x += dx * (radius * 0.5f);
+            start.z += dz * (radius * 0.5f);
+            start.y -= 12.0f;
+            end = start;
+            end.x += dx * (radius + 18.0f);
+            end.z += dz * (radius + 18.0f);
+            end.y -= 100.0f;
+            found = BgCheck_EntityLineTest1(&play->colCtx, &start, &end, &hit, &wall, true, false, false,
+                                           true, &bgId);
         }
+        if ((!found || wall == NULL) && player->actor.wallPoly != NULL &&
+            (player->actor.bgCheckFlags & BGCHECKFLAG_WALL)) {
+            // P1 obtains the actual touching wall from collision processing.
+            // Reuse that verified contact only when its surface flags
+            // identify a ladder, never attach P2 to arbitrary walls.
+            CollisionPoly* contact = player->actor.wallPoly;
+            const s32 flags = SurfaceType_GetWallFlags(&play->colCtx, contact, player->actor.wallBgId);
+            if ((flags & WALL_FLAG_LADDER) || (fromTop && (flags & WALL_FLAG_LADDER_TOP))) {
+                wall = contact;
+                bgId = player->actor.wallBgId;
+                hit = pos;
+                found = true;
+            }
+        }
+        if (!found || wall == NULL)
+            continue;
         const s32 wallFlags = SurfaceType_GetWallFlags(&play->colCtx, wall, bgId);
         // OoT intentionally distinguishes a ladder's vertical surface
         // from its upper entrance. Without LADDER_TOP P2 could never
