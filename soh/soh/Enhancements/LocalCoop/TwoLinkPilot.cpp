@@ -114,7 +114,9 @@ struct PilotRuntime {
     PilotTraversal traversal = PilotTraversal::None;
     PilotLadder ladder = PilotLadder::None;
     int ladderStep = 0;
-    int ladderDirection = 0;
+    int ladderDirection = 0; // Current committed rung: finish before reversing or releasing.
+    f32 ladderCycleSpeed = 1.0f;
+    f32 ladderLastRootY = 0.0f;
     int ladderCooldown = 0;
     Vec3f ladderAnchor = {};
     Vec3f ladderEntryStart = {};
@@ -380,6 +382,7 @@ void Pilot_BeginLadder(Player* player, PlayState* play, bool fromTop, const Vec3
     sPilot.ladderTopY = topY;
     sPilot.ladderStep = 0;
     sPilot.ladderDirection = 0;
+    sPilot.ladderCycleSpeed = 1.0f;
     // P1 moves into its attachment animation. Don't warp P2/camera to
     // the ladder before the first animation frame.
     actor->prevPos = actor->world.pos;
@@ -415,7 +418,7 @@ void Pilot_LadderDismount(Player* player, PlayState* play, bool atTop, const Vec
 
 // Runs before ordinary movement so climbing never receives an independent
 // gravity step, stale roll animation or a second ammo transaction.
-bool Pilot_UpdateLadder(Player* player, PlayState* play, const OSContPad& pad, bool canAct) {
+bool Pilot_UpdateLadder(Player* player, PlayState* play, f32 worldX, f32 worldZ, bool canAct) {
     if (sPilot.ladder == PilotLadder::None)
         return false;
     Actor* actor = &player->actor;
@@ -462,39 +465,52 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, const OSContPad& pad, b
             Pilot_ClearLadder(player);
         }
     } else {
-        const int direction = pad.stick_y > 23 ? 1 : (pad.stick_y < -23 ? -1 : 0);
+        // The P2 camera can face a different direction from P1's and rotate
+        // during ladder entry. Project independent WORLD stick movement onto
+        // P2's own ladder facing, not raw controller stick_y.
+        const f32 along = worldX * Math_SinS(sPilot.ladderYaw) + worldZ * Math_CosS(sPilot.ladderYaw);
+        const int requested = along > 0.29f ? 1 : (along < -0.29f ? -1 : 0);
+        if (sPilot.ladderDirection == 0 && requested != 0) {
+            // Match P1: alternate age-specific left/right rung assets,
+            // selecting the opposite phase when descending.
+            const int clipIndex = (sPilot.ladderStep & 1) ^ (requested < 0 ? 1 : 0);
+            LinkAnimationHeader* anim = player->ageProperties->unk_AC[clipIndex];
+            const f32 last = static_cast<f32>(Animation_GetLastFrame(anim));
+            sPilot.ladderDirection = requested;
+            sPilot.ladderCycleSpeed =
+                std::clamp(std::fabs(along) * 4.0f, 1.0f, 3.35f) +
+                static_cast<f32>(CVarGetInteger(CVAR_ENHANCEMENT("ClimbSpeed"), 0));
+            // These are P1's actual first/last root translations for each
+            // alternate rung. The difference in animation roots determines
+            // displacement; no estimated constant per-frame climb speed.
+            sPilot.ladderLastRootY = requested > 0 ? player->ageProperties->unk_4A[clipIndex].y
+                                                  : player->ageProperties->unk_62[clipIndex].y;
+            LinkAnimation_Change(play, &player->skelAnime, anim, requested * sPilot.ladderCycleSpeed,
+                                 requested > 0 ? 0.0f : last, requested > 0 ? last : 0.0f, ANIMMODE_ONCE, 0.0f);
+        }
+        const int direction = sPilot.ladderDirection;
         if (direction == 0) {
-            // Hold on the ladder at the current animation frame.
             player->stateFlags2 |= PLAYER_STATE2_STATIONARY_LADDER;
         } else {
             player->stateFlags2 &= ~PLAYER_STATE2_STATIONARY_LADDER;
-            const f32 stickSpeed = std::clamp(std::fabs(static_cast<f32>(pad.stick_y)) * 0.05f, 1.0f, 3.35f);
-            const f32 climbSpeed = stickSpeed + CVarGetInteger(CVAR_ENHANCEMENT("ClimbSpeed"), 0);
-            if (direction != sPilot.ladderDirection) {
-                sPilot.ladderDirection = direction;
-                LinkAnimationHeader* anim = player->ageProperties->unk_AC[sPilot.ladderStep & 1];
-                const f32 last = Animation_GetLastFrame(anim);
-                LinkAnimation_Change(play, &player->skelAnime, anim, direction * climbSpeed,
-                                     direction > 0 ? 0.0f : last, direction > 0 ? last : 0.0f, ANIMMODE_ONCE, 0.0f);
-            } else {
-                player->skelAnime.playSpeed = direction * climbSpeed;
+            // As on P1, once a foot begins a rung it finishes that rung
+            // before a stop or direction reversal. This avoids half-rung
+            // foot slides and repeated animation restarts.
+            player->skelAnime.playSpeed = direction * sPilot.ladderCycleSpeed;
+            const bool rungFinished = LinkAnimation_Update(play, &player->skelAnime) != 0;
+            const f32 rootY = static_cast<f32>(player->skelAnime.jointTable[0].y);
+            const f32 delta = (rootY - sPilot.ladderLastRootY) * actor->scale.y;
+            if (std::isfinite(delta) && direction * delta >= 0.0f && std::fabs(delta) <= 25.0f) {
+                actor->world.pos.y += delta;
+                sPilot.ladderLastRootY = rootY;
             }
-            if (LinkAnimation_Update(play, &player->skelAnime)) {
+            // World movement owns the actual rung translation; avoid
+            // simultaneously rendering that same root-bone displacement.
+            player->skelAnime.jointTable[0] = player->skelAnime.baseTransl;
+            if (rungFinished) {
                 sPilot.ladderStep ^= 1;
                 sPilot.ladderDirection = 0;
             }
-            // The vanilla ladder uses root translation from age-specific
-            // climbing assets. The separate pilot currently owns position,
-            // so reproduce that translation without Player_StartAnimMovement
-            // (which would mutate P1-only action globals).
-            const f32 cycle = std::max(1.0f, static_cast<f32>(Animation_GetLastFrame(player->skelAnime.animation)));
-            // P1's native ladder is a roughly 15-unit root-motion step per
-            // animation cycle, not the pilot's arbitrary 1.45 units/frame.
-            // Scale displacement with animation playback, including reverse.
-            actor->world.pos.y += direction * (15.0f / cycle) * climbSpeed * player->ageProperties->unk_08;
-            // We own the translation in world space; do not also render
-            // the root bone's climb offset on top of the actor movement.
-            player->skelAnime.jointTable[0] = player->skelAnime.baseTransl;
 
             // A bottom-entry query can see only one segmented ladder polygon.
             // Refresh the upper bound when the next tagged section is visible.
@@ -509,7 +525,7 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, const OSContPad& pad, b
                     sPilot.ladderTopY = nextTop;
             }
 
-            if (direction < 0) {
+            if (rungFinished && direction < 0) {
                 Vec3f floorProbe = actor->world.pos;
                 floorProbe.y += 12.0f;
                 CollisionPoly* ground = nullptr;
@@ -520,7 +536,7 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, const OSContPad& pad, b
                     landing.y = floorY;
                     Pilot_LadderDismount(player, play, false, landing);
                 }
-            } else {
+            } else if (rungFinished && direction > 0) {
                 const f32 dirX = Math_SinS(sPilot.ladderYaw);
                 const f32 dirZ = Math_CosS(sPilot.ladderYaw);
                 // P1 checks an age-dependent point beyond the ladder wall.
@@ -997,7 +1013,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     }
     if (!nativeTraversal && sPilot.ladder != PilotLadder::None)
         Pilot_ClearLadder(player);
-    if (nativeTraversal && Pilot_UpdateLadder(player, play, pad, canAct)) {
+    if (nativeTraversal && Pilot_UpdateLadder(player, play, worldX, worldZ, canAct)) {
         player->currentTunic = GET_PLAYER(play)->currentTunic;
         player->currentBoots = GET_PLAYER(play)->currentBoots;
         player->currentShield = GET_PLAYER(play)->currentShield;
