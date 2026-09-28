@@ -76,6 +76,7 @@ enum class PilotItemPose { None, BombPickup, BombThrow, Nut };
 enum class PilotTraversal { None, AutoJump, HighStepWindup, Hanging, Climbing };
 enum class PilotLadder { None, EnterBottom, EnterTop, Active, DismountBottom, DismountTop };
 enum class PilotLockMove { None, Forward, Back, Left, Right };
+enum class PilotDodge { None, SideLeft, Backflip, SideRight };
 struct PilotRuntime {
     Actor* actor = nullptr;
     Actor* heldBomb = nullptr;
@@ -90,6 +91,9 @@ struct PilotRuntime {
     int itemDebounceFrames = 0;
     int rollFrames = 0;
     bool nativeRoll = false;
+    PilotDodge dodge = PilotDodge::None;
+    bool dodgeLanding = false;
+    s16 dodgeYaw = 0;
     bool rollInvulnStarted = false;
     f32 rollSpeed = 0.0f;
     s16 rollYaw = 0;
@@ -222,6 +226,16 @@ void Pilot_BeginJump(Player* player, f32 verticalSpeed) {
     sPilot.takeoffY = actor->world.pos.y;
     sPilot.landingFrames = 0;
     sPilot.ledgeCooldownFrames = 12;
+}
+
+// Native assets match P1's D_80853D4C directional hop table.
+LinkAnimationHeader* Pilot_DodgeAnim(PilotDodge dodge, bool landing) {
+    if (dodge == PilotDodge::SideLeft)
+        return Pilot_Animation(landing ? gPlayerAnim_link_fighter_Lside_jump_endL : gPlayerAnim_link_fighter_Lside_jump);
+    if (dodge == PilotDodge::SideRight)
+        return Pilot_Animation(landing ? gPlayerAnim_link_fighter_Rside_jump_endR : gPlayerAnim_link_fighter_Rside_jump);
+    return Pilot_Animation(landing ? gPlayerAnim_link_fighter_backturn_jump_endR
+                                   : gPlayerAnim_link_fighter_backturn_jump);
 }
 
 void Pilot_BeginHang(Player* player, PlayState* play, f32 rise, const Vec3f& stand, s16 facing) {
@@ -476,7 +490,7 @@ bool Pilot_TryLadder(Player* player, PlayState* play, const OSContPad& pad, bool
         --sPilot.ladderCooldown;
     if (!enabled || !canAct || carryingBomb || !moving || sPilot.ledgeCooldownFrames > 0 || sPilot.ladderCooldown > 0 ||
         sPilot.rollFrames > 0 || sPilot.itemFrames > 0 || sPilot.lockedTarget != nullptr ||
-        sPilot.traversal != PilotTraversal::None || player->ageProperties == nullptr)
+        sPilot.traversal != PilotTraversal::None || sPilot.dodge != PilotDodge::None || player->ageProperties == nullptr)
         return false;
 
     Vec3f anchor = {};
@@ -530,7 +544,8 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
         return false;
     }
 
-    if (sPilot.ledgeCooldownFrames > 0 || sPilot.rollFrames > 0 || sPilot.itemFrames > 0)
+    if (sPilot.ledgeCooldownFrames > 0 || sPilot.rollFrames > 0 || sPilot.itemFrames > 0 ||
+        sPilot.dodge != PilotDodge::None)
         return false;
 
     // The original player probes at head height using the current forward
@@ -919,7 +934,38 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         Pilot_ReleaseBomb(actor, heldBomb, moving);
         heldBomb = nullptr;
     } else if (canAct && (pressed & BTN_A) && heldBomb == nullptr && wasGrounded && moving && sPilot.rollFrames == 0 &&
-               sPilot.itemFrames == 0) {
+               sPilot.itemFrames == 0 && sPilot.dodge == PilotDodge::None) {
+        PilotDodge dodge = PilotDodge::None;
+        if (nativeMovement && sPilot.lockedTarget != nullptr) {
+            const Vec3f& focus = sPilot.lockedTarget->focus.pos;
+            const s16 facing = static_cast<s16>(std::atan2(focus.x - actor->world.pos.x,
+                                                           focus.z - actor->world.pos.z) * kRadiansToN64Angle);
+            const f32 forward = worldX * Math_SinS(facing) + worldZ * Math_CosS(facing);
+            const f32 right = worldZ * Math_SinS(facing) - worldX * Math_CosS(facing);
+            if (std::fabs(right) > std::fabs(forward) * 1.2f)
+                dodge = right > 0 ? PilotDodge::SideRight : PilotDodge::SideLeft;
+            else if (forward < -0.35f)
+                dodge = PilotDodge::Backflip;
+            if (dodge != PilotDodge::None) {
+                sPilot.dodge = dodge;
+                sPilot.dodgeLanding = false;
+                const bool side = dodge != PilotDodge::Backflip;
+                Pilot_BeginJump(player, side ? 3.5f : 5.8f);
+                const s16 angle = dodge == PilotDodge::Backflip ? static_cast<s16>(0x8000)
+                                  : dodge == PilotDodge::SideLeft ? static_cast<s16>(0x4000)
+                                                                   : static_cast<s16>(-0x4000);
+                sPilot.dodgeYaw = static_cast<s16>(facing + angle);
+                player->yaw = actor->world.rot.y = sPilot.dodgeYaw;
+                actor->shape.rot.y = facing;
+                actor->speedXZ = player->linearVelocity = side ? 8.5f : 6.0f;
+                LinkAnimationHeader* anim = Pilot_DodgeAnim(dodge, false);
+                LinkAnimation_Change(play, &player->skelAnime, anim, 1.0f, 0.0f,
+                                     Animation_GetLastFrame(anim), ANIMMODE_ONCE, -3.0f);
+                if (side) gSaveContext.ship.stats.count[COUNT_SIDEHOPS]++;
+                else gSaveContext.ship.stats.count[COUNT_BACKFLIPS]++;
+            }
+        }
+        if (dodge == PilotDodge::None) {
         sPilot.nativeRoll = nativeMovement;
         sPilot.rollInvulnStarted = false;
         sPilot.rollFrames = nativeMovement ? 30 : kRollFrames;
@@ -941,6 +987,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             LinkAnimationHeader* roll = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_landing_roll);
             LinkAnimation_PlayOnceSetSpeed(play, &player->skelAnime, roll, 1.25f);
             gSaveContext.ship.stats.count[COUNT_ROLLS]++;
+        }
         }
     }
 
@@ -964,7 +1011,9 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             const f32 sine = Math_SinS(targetFacing);
             const f32 cosine = Math_CosS(targetFacing);
             const f32 forward = worldX * sine + worldZ * cosine;
-            const f32 right = worldX * cosine - worldZ * sine;
+            // Link-facing right is (-cos(yaw), +sin(yaw)), the inverse of
+            // the previous sign. A right-stick direction must pick right.
+            const f32 right = worldZ * sine - worldX * cosine;
             if (std::fabs(right) > std::fabs(forward) * 0.75f) {
                 sPilot.lockMove = right > 0.0f ? PilotLockMove::Right : PilotLockMove::Left;
             } else if (forward < -0.25f) {
@@ -995,7 +1044,12 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             canAct && moving ? ShipCrewPlayer_CalcGroundSpeedTarget(stickMagnitude, speedLimit, player->floorPitch,
                                                                     !hostileLock && !sPilot.parallelTargeting)
                              : 0.0f;
-        if (sPilot.rollFrames > 0) {
+        if (sPilot.dodge != PilotDodge::None) {
+            player->yaw = actor->world.rot.y = sPilot.dodgeYaw;
+            if (sPilot.dodgeLanding)
+                Math_StepToF(&player->linearVelocity, 0.0f, REG(43) / 100.0f);
+            actor->speedXZ = std::max(player->linearVelocity, 0.0f);
+        } else if (sPilot.rollFrames > 0) {
             if (sPilot.nativeRoll) {
                 // Mirror P1 Player_Action_Roll's per-frame speed calculation:
                 // curved stick speed * 1.5, minimum 3, original run step,
@@ -1105,9 +1159,12 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     }
     const bool grounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
     if (!wasGrounded && grounded && fallingBeforeMove) {
+        if (sPilot.dodge != PilotDodge::None)
+            sPilot.dodgeLanding = true;
         const f32 fallDistance = sPilot.takeoffY - actor->world.pos.y;
         sPilot.longLanding = nativeTraversal && fallDistance > 80.0f;
-        sPilot.landingFrames = sPilot.longLanding ? kLandingFrames * 2 : kLandingFrames;
+        if (sPilot.dodge == PilotDodge::None)
+            sPilot.landingFrames = sPilot.longLanding ? kLandingFrames * 2 : kLandingFrames;
         if (sPilot.traversal == PilotTraversal::AutoJump)
             Pilot_ClearTraversal(actor, player);
     }
@@ -1142,7 +1199,10 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                                            sPilot.lockedTarget == nullptr && !sPilot.parallelTargeting)
                                      : 0.0f;
     const bool running = nativeMovement ? nativeInputSpeed > 4.9f : inputLength > kWalkThreshold;
-    if (sPilot.rollFrames > 0 && grounded) {
+    if (sPilot.dodge != PilotDodge::None) {
+        animation = Pilot_DodgeAnim(sPilot.dodge, sPilot.dodgeLanding);
+        mode = ANIMMODE_ONCE;
+    } else if (sPilot.rollFrames > 0 && grounded) {
         animation = nativeMovement ? ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_landing_roll)
                                    : Pilot_Animation(gPlayerAnim_link_normal_landing_roll_free);
         mode = ANIMMODE_ONCE;
@@ -1242,7 +1302,11 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     if (nativeMovement && locomotionLoop) {
         player->skelAnime.playSpeed = std::clamp(actor->speedXZ / (running ? 5.0f : 2.0f), 0.6f, 2.0f);
     }
-    LinkAnimation_Update(play, &player->skelAnime);
+    const bool animationFinished = LinkAnimation_Update(play, &player->skelAnime) != 0;
+    if (sPilot.dodge != PilotDodge::None && sPilot.dodgeLanding && animationFinished) {
+        sPilot.dodge = PilotDodge::None;
+        sPilot.dodgeLanding = false;
+    }
 
     if (sPilot.rollFrames > 0) {
         if (sPilot.nativeRoll) {
