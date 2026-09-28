@@ -497,7 +497,6 @@ void Pilot_CheckNativeLadderBoundary(Player* player, PlayState* play, s32 direct
             Pilot_LadderDismount(player, play, true, sPilot.ladderTopEntry);
         }
     }
-
 }
 
 bool Pilot_UpdateLadder(Player* player, PlayState* play, f32 worldX, f32 worldZ, bool canAct) {
@@ -607,7 +606,6 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, f32 worldX, f32 worldZ,
                 sPilot.ladderBoundaryPending = true;
                 sPilot.ladderCompletedDirection = direction;
             }
-
         }
     }
     Actor_SetFocus(actor, 40.0f);
