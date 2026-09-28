@@ -1005,6 +1005,11 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         sPilot = {};
         sPilot.actor = actor;
     }
+    // P1 registers its initialized body collider inside Player_UpdateCommon.
+    // P2 does not run that function, so its original Player cylinder was
+    // invisible to prop OC collision despite matching P1's geometry.
+    Collider_UpdateCylinder(actor, &player->cylinder);
+    CollisionCheck_SetOC(play, &play->colChkCtx, &player->cylinder.base);
 
     if (sPilot.ladderExitGraceFrames > 0)
         --sPilot.ladderExitGraceFrames;
@@ -1771,6 +1776,19 @@ extern "C" Actor* ShipCrewCamera_GetSecondTarget(PlayState* play) {
         !Pilot_TargetIsLive(play, sPilot.lockedTarget))
         return nullptr;
     return sPilot.lockedTarget;
+}
+
+// Prop collision and interaction access must not depend on split-screen
+// rendering or the secondary camera being initialized.
+extern "C" Player* ShipCrewPilot_GetInteractionPlayer(PlayState* play) {
+    if (play == nullptr || CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0 ||
+        CVarGetInteger(CVAR_ENHANCEMENT("IvanCoopModeEnabled"), 0) != 0 ||
+        GET_PLAYER(play) == nullptr)
+        return nullptr;
+    Actor* pilot = FindPilotActor(play);
+    return pilot != nullptr && pilot == sPilot.actor && pilot->update != nullptr
+               ? reinterpret_cast<Player*>(pilot)
+               : nullptr;
 }
 
 extern "C" Player* ShipCrewCamera_GetNativeSecondPlayer(PlayState* play) {
