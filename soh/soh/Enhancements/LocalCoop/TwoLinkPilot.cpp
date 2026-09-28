@@ -28,6 +28,14 @@ LinkAnimationHeader* ShipCrewPlayer_GetGroupAnimation(Player* player, s32 group)
 f32 ShipCrewPlayer_GetRunSpeedLimit(void);
 void ShipCrewPlayer_ApplyNativeRunMotion(Player* player, f32 speedTarget, s16 yawTarget);
 f32 ShipCrewPlayer_CalcGroundSpeedTarget(f32 magnitude, f32 speedCap, s16 floorPitch, s32 curved);
+f32 ShipCrewPlayer_CalcNativeAnalogSpeed(Player* player, f32 magnitude, s32 curved);
+void ShipCrewPlayer_ApplyNativeAirMotion(Player* player, f32 speedTarget, s16 yawTarget);
+s32 ShipCrewPlayer_ApplyNativeIdleBrake(Player* player);
+LinkAnimationHeader* ShipCrewPlayer_SelectNativeAutoJump(Player* player, f32* verticalSpeed);
+void ShipCrewPlayer_StartNativeRollClip(PlayState* play, Player* player, f32 waterSpeedFactor);
+LinkAnimationHeader* ShipCrewPlayer_SelectNativeDodge(s32 direction, s32 landing);
+f32 ShipCrewPlayer_NativeDodgeVerticalSpeed(s32 direction);
+f32 ShipCrewPlayer_NativeDodgeHorizontalSpeed(s32 direction);
 LinkAnimationHeader* ShipCrewPlayer_SelectNativeLadderRung(Player* player, s32 phase, s32 direction);
 void ShipCrewPlayer_QueueNativeAnimMovement(PlayState* play, Player* player);
 s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* rise, Vec3f* stand, s16* facing);
@@ -97,6 +105,7 @@ struct PilotRuntime {
     int rollRecoveryFrames = 0;
     PilotDodge dodge = PilotDodge::None;
     bool dodgeLanding = false;
+    LinkAnimationHeader* nativeAutoJumpAnim = nullptr;
     s16 dodgeYaw = 0;
     bool rollInvulnStarted = false;
     f32 rollSpeed = 0.0f;
@@ -242,6 +251,7 @@ void Pilot_BeginJump(Player* player, f32 verticalSpeed) {
     player->stateFlags1 |= PLAYER_STATE1_JUMPING;
     player->stateFlags1 &= ~(PLAYER_STATE1_HANGING_OFF_LEDGE | PLAYER_STATE1_CLIMBING_LEDGE);
     sPilot.traversal = PilotTraversal::AutoJump;
+    sPilot.nativeAutoJumpAnim = nullptr;
     sPilot.takeoffY = actor->world.pos.y;
     sPilot.landingFrames = 0;
     sPilot.ledgeCooldownFrames = 12;
@@ -249,16 +259,9 @@ void Pilot_BeginJump(Player* player, f32 verticalSpeed) {
 
 // Native assets match P1's D_80853D4C directional hop table.
 LinkAnimationHeader* Pilot_DodgeAnim(PilotDodge dodge, bool landing) {
-    if (dodge == PilotDodge::SideLeft)
-        return Pilot_Animation(landing ? gPlayerAnim_link_fighter_Lside_jump_endL
-                                       : gPlayerAnim_link_fighter_Lside_jump);
-    if (dodge == PilotDodge::SideRight)
-        return Pilot_Animation(landing ? gPlayerAnim_link_fighter_Rside_jump_endR
-                                       : gPlayerAnim_link_fighter_Rside_jump);
-    return Pilot_Animation(landing ? gPlayerAnim_link_fighter_backturn_jump_endR
-                                   : gPlayerAnim_link_fighter_backturn_jump);
+    // Exact P1 fighter dodge assets, including left/right/back landing poses.
+    return ShipCrewPlayer_SelectNativeDodge(static_cast<s32>(dodge), landing);
 }
-
 void Pilot_BeginHang(Player* player, PlayState* play, f32 rise, const Vec3f& stand, s16 facing) {
     Actor* actor = &player->actor;
     sPilot.ledgeStand = stand;
@@ -723,14 +726,11 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
         std::abs(static_cast<s32>(static_cast<s16>(actor->world.rot.y - actor->shape.rot.y))) < 0x2000 &&
         actor->world.pos.y - actor->floorHeight > 20.0f) {
         f32 jumpSpeed;
-        if (player->linearVelocity > IREG(66) / 100.0f) {
-            jumpSpeed = IREG(67) / 100.0f;
-        } else {
-            jumpSpeed = IREG(68) / 100.0f + IREG(69) * player->linearVelocity / 1000.0f;
-        }
+        LinkAnimationHeader* nativeAnim = ShipCrewPlayer_SelectNativeAutoJump(player, &jumpSpeed);
         SPDLOG_INFO("[ShipCrew] P2 autojump ground-leave: pos=({}, {}, {}) floor={} speed={}", actor->world.pos.x,
                     actor->world.pos.y, actor->world.pos.z, actor->floorHeight, actor->speedXZ);
-        Pilot_BeginJump(player, std::max(4.0f, jumpSpeed));
+        Pilot_BeginJump(player, jumpSpeed);
+        sPilot.nativeAutoJumpAnim = nativeAnim;
         return false;
     }
 
@@ -779,7 +779,10 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
     if (type == PLAYER_LEDGE_CLIMB_1 && sPilot.ledgeProbeFrames >= 3) {
         SPDLOG_INFO("[ShipCrew] P2 low-step jump: rise={} pos=({}, {}, {})", rise, actor->world.pos.x,
                     actor->world.pos.y, actor->world.pos.z);
+        f32 nativeSpeed;
+        LinkAnimationHeader* nativeAnim = ShipCrewPlayer_SelectNativeAutoJump(player, &nativeSpeed);
         Pilot_BeginJump(player, rise * 0.08f + 5.5f);
+        sPilot.nativeAutoJumpAnim = nativeAnim;
         actor->speedXZ = player->linearVelocity = 2.5f;
         actor->world.rot.y = player->yaw = facing;
         return false;
@@ -1159,15 +1162,16 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                             sPilot.lockedTarget != nullptr, sPilot.parallelTargeting);
                 sPilot.dodge = dodge;
                 sPilot.dodgeLanding = false;
+                const s32 nativeDodge = static_cast<s32>(dodge);
                 const bool side = dodge != PilotDodge::Backflip;
-                Pilot_BeginJump(player, side ? 3.5f : 5.8f);
+                Pilot_BeginJump(player, ShipCrewPlayer_NativeDodgeVerticalSpeed(nativeDodge));
                 const s16 angle = dodge == PilotDodge::Backflip   ? static_cast<s16>(0x8000)
                                   : dodge == PilotDodge::SideLeft ? static_cast<s16>(0x4000)
                                                                   : static_cast<s16>(-0x4000);
                 sPilot.dodgeYaw = static_cast<s16>(facing + angle);
                 player->yaw = actor->world.rot.y = sPilot.dodgeYaw;
                 actor->shape.rot.y = facing;
-                actor->speedXZ = player->linearVelocity = side ? 8.5f : 6.0f;
+                actor->speedXZ = player->linearVelocity = ShipCrewPlayer_NativeDodgeHorizontalSpeed(nativeDodge);
                 LinkAnimationHeader* anim = Pilot_DodgeAnim(dodge, false);
                 LinkAnimation_Change(play, &player->skelAnime, anim, 1.0f, 0.0f, Animation_GetLastFrame(anim),
                                      ANIMMODE_ONCE, -3.0f);
@@ -1196,8 +1200,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             if (nativeMovement) {
                 // P1's roll starts at 1.25x playback and lasts through the
                 // animation's actual frame 20, not a hard-coded 20 physics ticks.
-                LinkAnimationHeader* roll = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_landing_roll);
-                LinkAnimation_PlayOnceSetSpeed(play, &player->skelAnime, roll, 1.25f);
+                ShipCrewPlayer_StartNativeRollClip(play, player, 1.0f);
                 gSaveContext.ship.stats.count[COUNT_ROLLS]++;
             }
         }
@@ -1255,9 +1258,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                          nativeLimit;
         }
         player->unk_880 = speedLimit;
-        const f32 nativeTarget = canAct && moving ? ShipCrewPlayer_CalcGroundSpeedTarget(stickMagnitude, speedLimit,
-                                                                                         player->floorPitch, !zMovement)
-                                                  : 0.0f;
+        const f32 nativeTarget =
+            canAct && moving ? ShipCrewPlayer_CalcNativeAnalogSpeed(player, stickMagnitude, !zMovement) : 0.0f;
         if (sPilot.dodge != PilotDodge::None) {
             player->yaw = actor->world.rot.y = sPilot.dodgeYaw;
             if (sPilot.dodgeLanding) {
@@ -1273,9 +1275,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                 // curved stick speed * 1.5, minimum 3, original run step,
                 // and movement fixed to Link's roll-facing yaw.
                 if (player->skelAnime.curFrame < 20.0f) {
-                    const f32 rollTarget = std::max(3.0f, ShipCrewPlayer_CalcGroundSpeedTarget(
-                                                              stickMagnitude, speedLimit, player->floorPitch, true) *
-                                                              1.5f);
+                    const f32 rollTarget =
+                        std::max(3.0f, ShipCrewPlayer_CalcNativeAnalogSpeed(player, stickMagnitude, true) * 1.5f);
                     // Preserve P1's committed opening roll direction, then
                     // permit modest analog corrections, not an instant
                     // reverse or a perpetual camera-facing lock.
@@ -1295,21 +1296,15 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             } else {
                 actor->speedXZ = kRollSpeed;
             }
-        } else if (!wasGrounded && sPilot.traversal == PilotTraversal::AutoJump) {
-            // Player 1's airborne func_8083DFE0 uses 0.05/0.1 velocity
-            // changes and a 200-unit yaw step, not full ground acceleration.
-            // Full ground acceleration every airborne frame made P2's
-            // autojump violently re-steer as its own camera followed it.
+        } else if (!wasGrounded) {
+            // Use P1's actual airborne function for natural falls AND
+            // autojumps, rather than reimplementing the coefficients here.
+            // P1 uses the linear input curve in the air, not the ground curve.
             const s16 desiredYaw =
                 moving ? static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle) : player->yaw;
-            const s16 yawDiff = player->yaw - desiredYaw;
-            if (std::abs(static_cast<s32>(yawDiff)) > 0x6000) {
-                if (Math_StepToF(&player->linearVelocity, 0.0f, 1.0f))
-                    player->yaw = desiredYaw;
-            } else {
-                Math_AsymStepToF(&player->linearVelocity, moving ? nativeTarget : 0.0f, 0.05f, 0.1f);
-                Math_ScaledStepToS(&player->yaw, desiredYaw, 200);
-            }
+            const f32 airTarget =
+                canAct && moving ? ShipCrewPlayer_CalcNativeAnalogSpeed(player, stickMagnitude, false) : 0.0f;
+            ShipCrewPlayer_ApplyNativeAirMotion(player, airTarget, desiredYaw);
             actor->speedXZ = std::max(0.0f, player->linearVelocity);
             actor->world.rot.y = player->yaw;
         } else if (sPilot.rollRecoveryFrames > 0 &&
@@ -1325,7 +1320,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             actor->world.rot.y = player->yaw;
         } else if (!canAct || !moving) {
             // Vanilla standing uses the boot-dependent idle deceleration.
-            Math_StepToF(&player->linearVelocity, 0.0f, REG(43) / 100.0f);
+            ShipCrewPlayer_ApplyNativeIdleBrake(player);
             actor->speedXZ = std::max(player->linearVelocity, 0.0f);
             actor->world.rot.y = player->yaw;
         } else {
@@ -1457,11 +1452,11 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     LinkAnimationHeader* animation = nullptr;
     u8 mode = ANIMMODE_LOOP;
     bool locomotionLoop = false;
-    const f32 nativeInputSpeed = nativeMovement && moving
-                                     ? ShipCrewPlayer_CalcGroundSpeedTarget(
-                                           80.0f * std::min(inputLength, 1.0f), player->unk_880, player->floorPitch,
-                                           sPilot.lockedTarget == nullptr && !sPilot.parallelTargeting)
-                                     : 0.0f;
+    const f32 nativeInputSpeed =
+        nativeMovement && moving
+            ? ShipCrewPlayer_CalcNativeAnalogSpeed(player, 80.0f * std::min(inputLength, 1.0f),
+                                                   sPilot.lockedTarget == nullptr && !sPilot.parallelTargeting)
+            : 0.0f;
     const bool running = nativeMovement ? nativeInputSpeed > 4.9f : inputLength > kWalkThreshold;
     if (sPilot.dodge != PilotDodge::None) {
         animation = Pilot_DodgeAnim(sPilot.dodge, sPilot.dodgeLanding);
@@ -1476,6 +1471,9 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         // frame. No manual A-button jump is introduced.
         if (nativeTraversal && actor->velocity.y < 0.0f) {
             animation = Pilot_Animation(gPlayerAnim_link_normal_landing_wait);
+        } else if (nativeTraversal && sPilot.traversal == PilotTraversal::AutoJump &&
+                   sPilot.nativeAutoJumpAnim != nullptr) {
+            animation = sPilot.nativeAutoJumpAnim;
         } else {
             animation = nativeMovement && actor->speedXZ > 4.0f ? Pilot_Animation(gPlayerAnim_link_normal_run_jump)
                                                                 : Pilot_Animation(gPlayerAnim_link_normal_jump);
