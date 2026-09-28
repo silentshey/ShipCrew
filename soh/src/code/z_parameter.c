@@ -4166,6 +4166,9 @@ void Interface_DrawItemButtons(PlayState* play) {
     OVERLAY_DISP = Gfx_TextureIA8(OVERLAY_DISP, gButtonBackgroundTex, BBtn_Size, BBtn_Size, PosX_BtnB, PosY_BtnB,
                                   BBtnScaled, BBtnScaled, BBtn_factor, BBtn_factor);
 
+    // The split HUD draws separate scaled clusters after native icon handling.
+    // Never draw the global P1 equipped-C backgrounds a second time.
+    if (!ShipCrewCamera_IsSplitOverlayActive(play)) {
     // C-Left Button Color & Texture
     gDPPipeSync(OVERLAY_DISP++);
     gDPSetPrimColor(OVERLAY_DISP++, 0, 0, cLeftButtonColor.r, cLeftButtonColor.g, cLeftButtonColor.b,
@@ -4190,6 +4193,8 @@ void Interface_DrawItemButtons(PlayState* play) {
                             (C_Right_BTN_Pos[0] + R_ITEM_BTN_WIDTH(3)) << 2,
                             (C_Right_BTN_Pos[1] + R_ITEM_BTN_WIDTH(3)) << 2, G_TX_RENDERTILE, 0, 0,
                             R_ITEM_BTN_DD(3) << 1, R_ITEM_BTN_DD(3) << 1);
+
+    }
 
     if ((pauseCtx->state < 8) || (pauseCtx->state >= 18)) {
         if ((play->pauseCtx.state != 0) || (play->pauseCtx.debugState != 0)) {
@@ -5101,6 +5106,65 @@ const char* digitTextures[] = { gCounterDigit0Tex, gCounterDigit1Tex, gCounterDi
 
 // ShipCrew retains separate native targeting contexts per local viewport.
 void ShipCrewAttention_DrawSplit(PlayState* play);
+s32 ShipCrewCamera_IsSplitOverlayActive(PlayState* play);
+
+// Three compact C slots per viewport; the original P1 equipment is shown in
+// the left half. P2 currently has independent hardwired bomb/nut input and a
+// deliberately empty C-down slot (do not pretend P2 has P1's C-down item).
+static void ShipCrew_DrawCSlot(PlayState* play, s16 x, s16 y, s16 item, s16 alpha) {
+    OPEN_DISPS(play->state.gfxCtx);
+    gDPPipeSync(OVERLAY_DISP++);
+    gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATEIA_PRIM, G_CC_MODULATEIA_PRIM);
+    gDPSetPrimColor(OVERLAY_DISP++, 0, 0, 255, 160, 0, alpha);
+    gDPSetEnvColor(OVERLAY_DISP++, 0, 0, 0, 255);
+    OVERLAY_DISP = Gfx_TextureIA8(OVERLAY_DISP, gButtonBackgroundTex, 32, 32, x, y, 19, 19,
+                                   (32 << 10) / 19, (32 << 10) / 19);
+    if (item < 0 || item >= 0xF0) {
+        CLOSE_DISPS(play->state.gfxCtx);
+        return;
+    }
+    gDPPipeSync(OVERLAY_DISP++);
+    gDPSetPrimColor(OVERLAY_DISP++, 0, 0, 255, 255, 255, alpha);
+    gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATERGBA_PRIM, G_CC_MODULATERGBA_PRIM);
+    gDPLoadTextureBlock(OVERLAY_DISP++, gItemIcons[item], G_IM_FMT_RGBA, G_IM_SIZ_32b, 32, 32, 0,
+                        G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP,
+                        G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD, G_TX_NOLOD);
+    gSPWideTextureRectangle(OVERLAY_DISP++, (x + 2) << 2, (y + 2) << 2, (x + 17) << 2, (y + 17) << 2,
+                            G_TX_RENDERTILE, 0, 0, (32 << 10) / 15, (32 << 10) / 15);
+    s16 ammoItem = item;
+    if (item >= ITEM_BOW_ARROW_FIRE && item <= ITEM_BOW_ARROW_LIGHT)
+        ammoItem = ITEM_BOW;
+    if (ammoItem == ITEM_BOMB || ammoItem == ITEM_NUT || ammoItem == ITEM_STICK || ammoItem == ITEM_BOW ||
+        ammoItem == ITEM_SLINGSHOT || ammoItem == ITEM_BOMBCHU || ammoItem == ITEM_BEAN) {
+        const s16 count = MAX(0, MIN(99, AMMO(ammoItem)));
+        gDPPipeSync(OVERLAY_DISP++);
+        gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATEIA_PRIM, G_CC_MODULATEIA_PRIM);
+        gDPSetPrimColor(OVERLAY_DISP++, 0, 0, count ? 255 : 120, count ? 255 : 120, count ? 255 : 120, alpha);
+        if (count >= 10)
+            OVERLAY_DISP = Gfx_TextureIA8(OVERLAY_DISP, (u8*)_gAmmoDigit0Tex[count / 10], 8, 8,
+                                           x + 7, y + 14, 8, 8, 1 << 10, 1 << 10);
+        OVERLAY_DISP = Gfx_TextureIA8(OVERLAY_DISP, (u8*)_gAmmoDigit0Tex[count % 10], 8, 8,
+                                       x + 13, y + 14, 8, 8, 1 << 10, 1 << 10);
+    }
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
+static void ShipCrew_DrawDualCButtons(PlayState* play) {
+    InterfaceContext* interfaceCtx = &play->interfaceCtx;
+    // Each cluster fits within its own 160-unit viewport at native 320 width.
+    // Keep icons on screen without altering global HUD cosmetic positions.
+    const s16 x[2] = { 91, 251 };
+    const s16 p1[3] = { gSaveContext.equips.buttonItems[1], gSaveContext.equips.buttonItems[2],
+                        gSaveContext.equips.buttonItems[3] };
+    const s16 p2[3] = { ITEM_BOMB, ITEM_NONE, ITEM_NUT };
+    const s16 alpha[3] = { interfaceCtx->cLeftAlpha, interfaceCtx->cDownAlpha, interfaceCtx->cRightAlpha };
+    for (s32 player = 0; player < 2; ++player) {
+        const s16* items = player == 0 ? p1 : p2;
+        ShipCrew_DrawCSlot(play, x[player], 176, items[0], alpha[0]);
+        ShipCrew_DrawCSlot(play, x[player] + 20, 197, items[1], alpha[1]);
+        ShipCrew_DrawCSlot(play, x[player] + 40, 176, items[2], alpha[2]);
+    }
+}
 
 void Interface_Draw(PlayState* play) {
     static s16 magicArrowEffectsR[] = { 255, 100, 255 };
@@ -5546,6 +5610,9 @@ void Interface_Draw(PlayState* play) {
 
         gDPPipeSync(OVERLAY_DISP++);
 
+        // In split gameplay the original native cluster is replaced by the
+        // independent compact P1/P2 clusters at the bottom of each viewport.
+        if (!ShipCrewCamera_IsSplitOverlayActive(play)) {
         // C-Left Button Icon & Ammo Count
         if (gSaveContext.equips.buttonItems[1] < 0xF0) {
             gDPSetPrimColor(OVERLAY_DISP++, 0, 0, 255, 255, 255, interfaceCtx->cLeftAlpha);
@@ -5581,6 +5648,10 @@ void Interface_Draw(PlayState* play) {
             gDPSetCombineLERP(OVERLAY_DISP++, PRIMITIVE, ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0,
                               PRIMITIVE, ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0);
             Interface_DrawAmmoCount(play, 3, interfaceCtx->cRightAlpha);
+        }
+
+        } else {
+            ShipCrew_DrawDualCButtons(play);
         }
 
         if (CVarGetInteger(CVAR_ENHANCEMENT("DpadEquips"), 0) != 0) {
