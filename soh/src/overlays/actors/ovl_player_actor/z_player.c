@@ -5958,11 +5958,9 @@ LinkAnimationHeader* ShipCrewPlayer_SelectNativeAutoJump(Player* player, f32* ve
 // P1's unchanged collision/velocity gate for an automatic jump. Exposing
 // its floor property and yaw as explicit parameters keeps P2 entirely local.
 s32 ShipCrewPlayer_ShouldNativeAutoJump(Player* player, s32 prevFloorProperty, f32 yDistToFloor, s16 yawDelta) {
-    return (player->actor.bgCheckFlags & BGCHECKFLAG_GROUND_LEAVE) &&
-           !(player->stateFlags1 & PLAYER_STATE1_IN_WATER) &&
-           prevFloorProperty != FLOOR_PROPERTY_6 && prevFloorProperty != FLOOR_PROPERTY_9 &&
-           yDistToFloor > 20.0f && player->meleeWeaponState == 0 &&
-           ABS(yawDelta) < 0x2000 && player->linearVelocity > 3.0f;
+    return (player->actor.bgCheckFlags & BGCHECKFLAG_GROUND_LEAVE) && !(player->stateFlags1 & PLAYER_STATE1_IN_WATER) &&
+           prevFloorProperty != FLOOR_PROPERTY_6 && prevFloorProperty != FLOOR_PROPERTY_9 && yDistToFloor > 20.0f &&
+           player->meleeWeaponState == 0 && ABS(yawDelta) < 0x2000 && player->linearVelocity > 3.0f;
 }
 
 s32 func_8083A4A8(Player* this, PlayState* play) {
