@@ -53,6 +53,14 @@ s32 ShipCrewPlayer_QueryNativeVine(PlayState* play, Player* player, s16 approach
                                    f32* bottomY, f32* topY);
 s32 ShipCrewPlayer_CanLiftContextActor(Actor* actor);
 s32 Player_CanThrowCarriedActor(Player* player, Actor* actor);
+s32 ShipCrewPlayer_PilotSwordItem(void);
+s32 ShipCrewPlayer_EquipPilotSword(PlayState* play, Player* player, s32 swordItem);
+void ShipCrewPlayer_SetPilotShield(Player* player, s32 guarding);
+void ShipCrewPlayer_UpdatePilotCombatStick(Player* player, s16 stickYaw, s16 worldYaw, f32 magnitude);
+s32 ShipCrewPlayer_BeginPilotSwordAttack(PlayState* play, Player* player, const Input* portInput, u32 pressed);
+s32 ShipCrewPlayer_TickPilotSword(PlayState* play, Player* player, const Input* portInput, u32 pressed);
+void ShipCrewPlayer_EndPilotSword(PlayState* play, Player* player);
+void ShipCrewPlayer_ResetPilotCombatCollision(PlayState* play, Player* player);
 }
 
 // The experimental switch lives in the existing Controls settings screen.
@@ -61,6 +69,7 @@ s32 Player_CanThrowCarriedActor(Player* player, Actor* actor);
 #define SHIPCREW_SPLIT_CVAR CVAR_SETTING("ShipCrew.SplitScreenPilot")
 #define SHIPCREW_NATIVE_LOCOMOTION_CVAR CVAR_SETTING("ShipCrew.P2NativeLocomotion")
 #define SHIPCREW_NATIVE_TRAVERSAL_CVAR CVAR_SETTING("ShipCrew.P2NativeTraversal")
+#define SHIPCREW_NATIVE_COMBAT_CVAR CVAR_SETTING("ShipCrew.P2NativeCombat")
 
 namespace {
 
@@ -104,6 +113,9 @@ struct PilotRuntime {
     Actor* actor = nullptr;
     Actor* heldBomb = nullptr;
     Actor* lockedTarget = nullptr;
+    bool nativeSwordActive = false;
+    bool nativeShielding = false;
+    bool combatPreviouslyEnabled = false;
     Actor* pickupCandidate = nullptr;
     Actor* carriedProp = nullptr;
     bool pickupAttached = false;
@@ -976,9 +988,9 @@ void Pilot_Init(Actor* actor, PlayState* play) {
     Player_SetModelGroup(player, Player_ActionToModelGroup(player, player->heldItemAction));
     play->playerInit(player, play, gPlayerSkelHeaders[gSaveContext.linkAge]);
 
-    // It is a visual/input probe, not yet a combat-capable player.
-    Effect_Delete(play, player->meleeWeaponEffectIndex);
-    player->meleeWeaponEffectIndex = TOTAL_EFFECT_COUNT;
+    // Keep the ORIGINAL per-player sword blure effect and original Player
+    // colliders created by playerInit. They are required by P1's existing
+    // limb callback and combat collision when the opt-in switch is enabled.
     play->func_11D54(player, play);
     actor->flags |= ACTOR_FLAG_LOCK_ON_DISABLED;
     actor->colChkInfo.mass = MASS_IMMOVABLE;
@@ -1035,7 +1047,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     const f32 x = static_cast<f32>(pad.stick_x) / kMaxStickValue;
     const f32 z = static_cast<f32>(pad.stick_y) / kMaxStickValue;
     const f32 inputLength = std::sqrt(x * x + z * z);
-    const bool moving = inputLength > 0.17f;
+    bool moving = inputLength > 0.17f;
     // Camera-relative movement must use the exact horizontal orientation of
     // P2's *rendered* camera, not its unsmoothed target yaw. Derive the basis
     // from the same cached eye/at passed to the second world render.
@@ -1115,6 +1127,53 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             player->stateFlags1 &= ~PLAYER_STATE1_PARALLEL;
     }
 
+    // First sword/shield integration follows P1's existing saved B sword
+    // and equipped shield. Item acquisition and ammunition stay shared;
+    // these actions only change P2's own model and native action state.
+    const bool nativeCombat = CVarGetInteger(SHIPCREW_NATIVE_COMBAT_CVAR, 0) != 0 &&
+                              CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0;
+    player->currentShield = GET_PLAYER(play)->currentShield;
+    player->currentTunic = GET_PLAYER(play)->currentTunic;
+    player->currentBoots = GET_PLAYER(play)->currentBoots;
+    if (!nativeCombat && sPilot.combatPreviouslyEnabled) {
+        if (sPilot.nativeSwordActive) {
+            ShipCrewPlayer_EndPilotSword(play, player);
+            sPilot.nativeSwordActive = false;
+        }
+        ShipCrewPlayer_SetPilotShield(player, false);
+        sPilot.nativeShielding = false;
+        sPilot.combatPreviouslyEnabled = false;
+    }
+    if (nativeCombat)
+        sPilot.combatPreviouslyEnabled = true;
+
+    if (sPilot.nativeSwordActive) {
+        // Same scene movement/collision step P1 performs BEFORE running its
+        // actionFunc. The original P1 sword callback owns the animation,
+        // attack frames and collision flags; there is no custom P2 hitbox.
+        if (!nativeCombat || !canAct || player->ageProperties == nullptr) {
+            ShipCrewPlayer_EndPilotSword(play, player);
+            sPilot.nativeSwordActive = false;
+        } else {
+            ShipCrewPlayer_UpdatePilotCombatStick(
+                player, Math_Atan2S(pad.stick_x, pad.stick_y),
+                Math_Atan2S(worldX, worldZ), std::min(80.0f, inputLength * 80.0f));
+            ShipCrewPlayer_ResetNativeGravity(player);
+            actor->speedXZ = std::max(0.0f, player->linearVelocity);
+            actor->world.rot.y = player->yaw;
+            Actor_MoveXZGravity(actor);
+            Actor_UpdateBgCheckInfo(play, actor, 26.0f, player->ageProperties->wallCheckRadius,
+                                    player->ageProperties->ceilingCheckHeight, 0x3F);
+            if (!ShipCrewPlayer_TickPilotSword(play, player, &play->state.input[1], pressed)) {
+                ShipCrewPlayer_EndPilotSword(play, player);
+                sPilot.nativeSwordActive = false;
+            }
+            ShipCrewPlayer_ResetPilotCombatCollision(play, player);
+            Actor_SetFocus(actor, 40.0f);
+            return;
+        }
+    }
+
     Actor* carriedProp = Pilot_LiveProp(play, sPilot.carriedProp);
     if (sPilot.carriedProp != nullptr && (carriedProp == nullptr || carriedProp->parent != actor)) {
         Pilot_DetachProp(player, nullptr, false);
@@ -1127,6 +1186,40 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     // rolls while running; there is no manual A-button jump.
     const bool nativeMovement = CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0;
     const bool nativeTraversal = nativeMovement && CVarGetInteger(SHIPCREW_NATIVE_TRAVERSAL_CVAR, 0) != 0;
+
+    // Prevent combat from stealing a ladder, crawlspace or carried prop.
+    const bool combatFree = canAct && nativeCombat && wasGrounded && heldBomb == nullptr &&
+                            carriedProp == nullptr && sPilot.pickupCandidate == nullptr &&
+                            sPilot.crawl == PilotCrawl::None && sPilot.ladder == PilotLadder::None &&
+                            sPilot.traversal == PilotTraversal::None && sPilot.dodge == PilotDodge::None &&
+                            sPilot.rollFrames == 0 && sPilot.itemFrames == 0;
+    if (nativeCombat && combatFree && ShipCrewPlayer_PilotSwordItem() != ITEM_NONE) {
+        ShipCrewPlayer_EquipPilotSword(play, player, ShipCrewPlayer_PilotSwordItem());
+        // Preserve P1's directional-combat inputs for its native selection.
+        ShipCrewPlayer_UpdatePilotCombatStick(player, Math_Atan2S(pad.stick_x, pad.stick_y),
+                                               Math_Atan2S(worldX, worldZ), std::min(80.0f, inputLength * 80.0f));
+    }
+
+    const bool defend = combatFree && (buttons & BTN_R) && player->currentShield != PLAYER_SHIELD_NONE;
+    if (defend != sPilot.nativeShielding) {
+        ShipCrewPlayer_SetPilotShield(player, defend);
+        sPilot.nativeShielding = defend;
+        if (defend)
+            SPDLOG_INFO("[ShipCrew] P2 native shield raised using P1 shield model and collider");
+    }
+    if (sPilot.nativeShielding)
+        moving = false;
+
+    if (combatFree && !sPilot.nativeShielding && (pressed & BTN_B) &&
+        ShipCrewPlayer_PilotSwordItem() != ITEM_NONE &&
+        ShipCrewPlayer_BeginPilotSwordAttack(play, player, &play->state.input[1], pressed)) {
+        sPilot.nativeSwordActive = true;
+        SPDLOG_INFO("[ShipCrew] P2 native P1 sword action begun (animation={}, model={})",
+                    player->meleeWeaponAnimation, player->modelGroup);
+        ShipCrewPlayer_ResetPilotCombatCollision(play, player);
+        Actor_SetFocus(actor, 40.0f);
+        return;
+    }
     if (Pilot_TryCrawl(player, play, nativeTraversal, canAct, pressed))
         return;
     // Native P1 gives environmental pickup priority over the A-button roll.
@@ -1535,6 +1628,12 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                                                                 : Pilot_Animation(gPlayerAnim_link_normal_jump);
         }
         sPilot.landingFrames = 0;
+    } else if (sPilot.nativeShielding) {
+        // Exact P1 native defense assets and equipment-dependent model type.
+        animation = Player_IsChildWithHylianShield(player)
+                        ? Pilot_Animation(gPlayerAnim_clink_normal_defense_ALL)
+                        : ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_defense_wait);
+        locomotionLoop = false;
     } else if (sPilot.itemFrames > 0) {
         switch (sPilot.itemPose) {
             case PilotItemPose::BombPickup:
@@ -1664,6 +1763,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     player->currentShield = GET_PLAYER(play)->currentShield;
     sPilot.lastObservedBombAmmo = AMMO(ITEM_BOMB);
     sPilot.lastObservedNutAmmo = AMMO(ITEM_NUT);
+    if (nativeCombat)
+        ShipCrewPlayer_ResetPilotCombatCollision(play, player);
 }
 
 void Pilot_Draw(Actor* actor, PlayState* play) {
@@ -1675,6 +1776,17 @@ void Pilot_Destroy(Actor* actor, PlayState* play) {
     if (carriedProp != nullptr && carriedProp->parent == actor)
         Pilot_DetachProp(reinterpret_cast<Player*>(actor), carriedProp, false);
     NameTag_RemoveAllForActor(actor);
+    // These are owned by P2's original Player_InitCommon. P1's destructor
+    // also manipulates the shared magic/save, so release ONLY P2 resources.
+    auto* player = reinterpret_cast<Player*>(actor);
+    if (player->meleeWeaponEffectIndex != TOTAL_EFFECT_COUNT) {
+        Effect_Delete(play, player->meleeWeaponEffectIndex);
+        player->meleeWeaponEffectIndex = TOTAL_EFFECT_COUNT;
+    }
+    Collider_DestroyCylinder(play, &player->cylinder);
+    Collider_DestroyQuad(play, &player->meleeWeaponQuads[0]);
+    Collider_DestroyQuad(play, &player->meleeWeaponQuads[1]);
+    Collider_DestroyQuad(play, &player->shieldQuad);
     if (sPilot.actor == actor) {
         // A carried bomb must be freed before its P2 parent is destroyed.
         // Leave the live bomb in the shared world rather than leaking a
