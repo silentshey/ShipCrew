@@ -220,7 +220,7 @@ void Pilot_BeginClimb(Player* player, PlayState* play, s32 type, bool fromHang) 
 
 void Pilot_BeginJump(Player* player, f32 verticalSpeed) {
     Actor* actor = &player->actor;
-    actor->gravity = kPilotGravity;
+    actor->gravity = sPilot.lockedTarget != nullptr ? -1.2f : kPilotGravity;
     actor->velocity.y = verticalSpeed;
     actor->bgCheckFlags &= ~BGCHECKFLAG_GROUND;
     player->stateFlags1 |= PLAYER_STATE1_JUMPING;
@@ -333,7 +333,10 @@ bool Pilot_UpdateTraversal(Player* player, PlayState* play, const OSContPad& pad
             Pilot_ClearTraversal(actor, player);
             sPilot.landingFrames = kLandingFrames;
             sPilot.ledgeCooldownFrames = 20;
-            return false;
+            // Don't integrate a SECOND gravity/movement step on the frame
+            // the climb completes: normal physics resumes next update.
+            Actor_SetFocus(actor, 40.0f);
+            return true;
         }
     }
 
@@ -1100,6 +1103,23 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             } else {
                 actor->speedXZ = kRollSpeed;
             }
+        } else if (!wasGrounded && sPilot.traversal == PilotTraversal::AutoJump) {
+            // Player 1's airborne func_8083DFE0 uses 0.05/0.1 velocity
+            // changes and a 200-unit yaw step, not full ground acceleration.
+            // Full ground acceleration every airborne frame made P2's
+            // autojump violently re-steer as its own camera followed it.
+            const s16 desiredYaw =
+                moving ? static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle) : player->yaw;
+            const s16 yawDiff = player->yaw - desiredYaw;
+            if (std::abs(static_cast<s32>(yawDiff)) > 0x6000) {
+                if (Math_StepToF(&player->linearVelocity, 0.0f, 1.0f))
+                    player->yaw = desiredYaw;
+            } else {
+                Math_AsymStepToF(&player->linearVelocity, moving ? nativeTarget : 0.0f, 0.05f, 0.1f);
+                Math_ScaledStepToS(&player->yaw, desiredYaw, 200);
+            }
+            actor->speedXZ = std::max(0.0f, player->linearVelocity);
+            actor->world.rot.y = player->yaw;
         } else if (!canAct || !moving) {
             // Vanilla standing uses the boot-dependent idle deceleration.
             Math_StepToF(&player->linearVelocity, 0.0f, REG(43) / 100.0f);
