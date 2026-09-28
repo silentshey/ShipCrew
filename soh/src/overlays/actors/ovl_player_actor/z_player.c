@@ -5450,6 +5450,100 @@ s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* outRise, Vec
     return rise >= age->unk_18 ? PLAYER_LEDGE_CLIMB_3 : PLAYER_LEDGE_CLIMB_2;
 }
 
+
+// Query the actual WALL_FLAG_LADDER collision surface used by P1, rather
+// than treating every ordinary climbable ledge as a ladder. This is safe for
+// an independent P2 actor: no global action, input, or camera is modified.
+// fromTop probes down and outward from the brink, where the ladder surface
+// is generally below P2's feet instead of at shoulder height.
+s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec3f* outAnchor, s16* outFacing,
+                               f32* outBottomY, f32* outTopY) {
+    if (play == NULL || player == NULL || player->ageProperties == NULL || outAnchor == NULL || outFacing == NULL ||
+        outBottomY == NULL || outTopY == NULL) {
+        return false;
+    }
+
+    const f32 forwardX = Math_SinS(player->yaw);
+    const f32 forwardZ = Math_CosS(player->yaw);
+    const f32 radius = player->ageProperties->wallCheckRadius;
+    const Vec3f pos = player->actor.world.pos;
+    // At the top allow either orientation: the player can walk to the lip
+    // facing the ladder or back up to it. The actual flagged wall and a real
+    // floor drop still must be present in either case.
+    for (s32 direction = 1; direction >= (fromTop ? -1 : 1); direction -= 2) {
+        const f32 dx = forwardX * direction;
+        const f32 dz = forwardZ * direction;
+        Vec3f start = pos;
+        Vec3f end = pos;
+        CollisionPoly* wall = NULL;
+        Vec3f hit = {};
+        s32 bgId;
+        if (fromTop) {
+            // Only consider a ladder if the ground really falls away on
+            // this side. Otherwise pressing DOWN near an ordinary wall must
+            // not grab it or teleport the second player.
+            Vec3f ahead = pos;
+            ahead.x += dx * (radius + 24.0f);
+            ahead.z += dz * (radius + 24.0f);
+            ahead.y += 50.0f;
+            CollisionPoly* aheadPoly = NULL;
+            const f32 aheadY = BgCheck_EntityRaycastFloor1(&play->colCtx, &aheadPoly, &ahead);
+            if (aheadPoly != NULL && aheadY > pos.y - 35.0f)
+                continue;
+            start.x -= dx * 4.0f;
+            start.z -= dz * 4.0f;
+            start.y -= 7.0f;
+            end.x += dx * (radius + 38.0f);
+            end.z += dz * (radius + 38.0f);
+            end.y -= 78.0f;
+        } else {
+            start.y += 18.0f;
+            end = start;
+            end.x += dx * (radius + 16.0f);
+            end.z += dz * (radius + 16.0f);
+        }
+        if (!BgCheck_EntityLineTest1(&play->colCtx, &start, &end, &hit, &wall, true, false, false, true,
+                                     &bgId) ||
+            wall == NULL || !(SurfaceType_GetWallFlags(&play->colCtx, wall, bgId) & WALL_FLAG_LADDER)) {
+            continue;
+        }
+        Vec3f vertices[3];
+        CollisionPoly_GetVerticesByBgId(wall, bgId, &play->colCtx, vertices);
+        f32 minY = vertices[0].y;
+        f32 maxY = vertices[0].y;
+        for (s32 i = 1; i < 3; ++i) {
+            minY = MIN(minY, vertices[i].y);
+            maxY = MAX(maxY, vertices[i].y);
+        }
+
+        // Use the same side of the wall P2 approached. This preserves the
+        // collision spacing instead of snapping to the opposite face.
+        const f32 nx = COLPOLY_GET_NORMAL(wall->normal.x);
+        const f32 nz = COLPOLY_GET_NORMAL(wall->normal.z);
+        const f32 side = ((pos.x - hit.x) * nx + (pos.z - hit.z) * nz) >= 0.0f ? 1.0f : -1.0f;
+        outAnchor->x = hit.x + side * nx * (radius - 1.0f);
+        outAnchor->z = hit.z + side * nz * (radius - 1.0f);
+        outAnchor->y = pos.y;
+        *outFacing = side > 0.0f ? (s16)(Math_Atan2S(nz, nx) + 0x8000)
+                                 : Math_Atan2S(nz, nx);
+        *outTopY = fromTop ? pos.y : maxY;
+        *outBottomY = fromTop ? minY : pos.y;
+        // For segmented ladder polygons there may be a lower ground floor
+        // beyond the queried wall triangle. A raycast from the actual
+        // ladder-side position gives the first reachable ground below P2.
+        Vec3f groundQuery = *outAnchor;
+        groundQuery.y = pos.y + 18.0f;
+        CollisionPoly* bottomFloor = NULL;
+        const f32 floorY = BgCheck_EntityRaycastFloor1(&play->colCtx, &bottomFloor, &groundQuery);
+        if (bottomFloor != NULL && floorY < *outTopY - 12.0f)
+            *outBottomY = floorY;
+        if (*outTopY < *outBottomY + 20.0f)
+            *outTopY = *outBottomY + 20.0f;
+        return true;
+    }
+    return false;
+}
+
 s32 Player_ActionHandler_1(Player* this, PlayState* play) {
     DoorShutter* doorShutter;
     EnDoor* door; // Can also be DoorKiller*
