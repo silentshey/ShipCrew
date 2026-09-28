@@ -497,7 +497,9 @@ void Pilot_CheckNativeLadderBoundary(Player* player, PlayState* play, s32 direct
         // leaving a bottom-entry climb permanently stuck at its top.
         Vec3f landing = {};
         bool foundTop = false;
-        for (const f32 extra : { 13.0f, 27.0f, 40.0f }) {
+        // Prefer a floor point safely inside the platform over a hit on
+        // the lip whose center alone is technically supported.
+        for (const f32 extra : { 40.0f, 27.0f, 13.0f }) {
             Vec3f upperProbe = actor->world.pos;
             upperProbe.x += dirX * (player->ageProperties->wallCheckRadius + extra);
             upperProbe.z += dirZ * (player->ageProperties->wallCheckRadius + extra);
@@ -507,10 +509,13 @@ void Pilot_CheckNativeLadderBoundary(Player* player, PlayState* play, s32 direct
             if (upperFloor != nullptr &&
                 actor->world.pos.y >= upperY - std::max(15.0f, 22.0f * player->ageProperties->unk_08) &&
                 actor->world.pos.y <= upperY + 25.0f && upperY >= sPilot.ladderBottomY + 25.0f) {
-                landing = upperProbe;
-                landing.y = upperY;
-                foundTop = true;
-                break;
+                Vec3f candidate = upperProbe;
+                candidate.y = upperY;
+                if (Pilot_HasLandingSupport(play, player, candidate, true)) {
+                    landing = candidate;
+                    foundTop = true;
+                    break;
+                }
             }
         }
         if (foundTop) {
@@ -519,7 +524,10 @@ void Pilot_CheckNativeLadderBoundary(Player* player, PlayState* play, s32 direct
                    sPilot.ladderTopEntry.y >= sPilot.ladderTopY - 14.0f) {
             // Return to the ORIGINAL platform when climbing back out
             // of the ladder P2 entered from above.
-            Pilot_LadderDismount(player, play, true, sPilot.ladderTopEntry);
+            if (Pilot_HasLandingSupport(play, player, sPilot.ladderTopEntry, true))
+                Pilot_LadderDismount(player, play, true, sPilot.ladderTopEntry);
+            else
+                SPDLOG_WARN("[ShipCrew] P2 previous ladder-top entrance no longer has safe landing support");
         }
     }
 }
