@@ -7617,6 +7617,8 @@ void func_8083E4C4(PlayState* play, Player* this, GetItemEntry* giEntry) {
 
 s32 ShipCrewPlayer_CanLiftContextActor(Actor* actor);
 
+s32 ShipCrewPlayer_IsNativeFreeClimbWall(PlayState* play, Actor* actor);
+
 s32 Player_ActionHandler_2(Player* this, PlayState* play) {
     Actor* interactedActor;
 
@@ -7842,7 +7844,7 @@ s32 func_8083EC18(Player* this, PlayState* play, u32 wallFlags) {
     if (this->yDistToLedge >= 79.0f) {
         if (!(this->stateFlags1 & PLAYER_STATE1_IN_WATER) || (this->currentBoots == PLAYER_BOOTS_IRON) ||
             (this->actor.yDistToWater < this->ageProperties->unk_2C)) {
-            s32 sp8C = (wallFlags & WALL_FLAG_CLIMBABLE) ? 2 : 0;
+            s32 sp8C = ShipCrewPlayer_IsNativeFreeClimbWall(play, &this->actor) ? 2 : 0;
 
             if ((sp8C != 0) || (wallFlags & WALL_FLAG_LADDER) ||
                 func_80041E4C(&play->colCtx, this->actor.wallPoly, this->actor.wallBgId)) {
@@ -7950,6 +7952,50 @@ s32 func_8083EC18(Player* this, PlayState* play, u32 wallFlags) {
 void Player_SetupDismountLadder(Player* this, LinkAnimationHeader* anim, PlayState* play) {
     Player_SetupActionPreserveAnimMovement(play, this, Player_Action_DismountLadder, 0);
     LinkAnimation_PlayOnceSetSpeed(play, &this->skelAnime, anim, (4.0f / 3.0f));
+}
+
+// P1's WALL_FLAG_CLIMBABLE defines free-climbing walls/vines (distinct
+// from WALL_FLAG_LADDER). The P2 actor cannot reuse P1's static input and
+// action callbacks, so expose the native surface test and polygon bounds.
+s32 ShipCrewPlayer_IsNativeFreeClimbWall(PlayState* play, Actor* actor) {
+    return play != NULL && actor != NULL && actor->wallPoly != NULL &&
+           (SurfaceType_GetWallFlags(&play->colCtx, actor->wallPoly, actor->wallBgId) &
+            WALL_FLAG_CLIMBABLE) != 0;
+}
+
+s32 ShipCrewPlayer_QueryNativeVine(PlayState* play, Player* player, s16 approachYaw,
+                                  Vec3f* outAnchor, s16* outFacing, f32* outBottomY, f32* outTopY) {
+    if (play == NULL || player == NULL || player->ageProperties == NULL ||
+        outAnchor == NULL || outFacing == NULL || outBottomY == NULL || outTopY == NULL) return false;
+    Actor* actor = &player->actor;
+    CollisionPoly* wall = NULL;
+    s32 bgId = BGCHECK_SCENE;
+    // Probe along the player's actual movement toward the wall; native P1
+    // also requires real collision with the CLIMBABLE tagged surface.
+    Vec3f from = actor->world.pos;
+    from.y += 26.0f;
+    Vec3f to = from;
+    to.x += Math_SinS(approachYaw) * (player->ageProperties->wallCheckRadius + 28.0f);
+    to.z += Math_CosS(approachYaw) * (player->ageProperties->wallCheckRadius + 28.0f);
+    Vec3f hit;
+    if (!BgCheck_EntityLineTest1(&play->colCtx, &from, &to, &hit, &wall, true, false, false, true, &bgId) ||
+        wall == NULL || !(SurfaceType_GetWallFlags(&play->colCtx, wall, bgId) & WALL_FLAG_CLIMBABLE))
+        return false;
+    const s16 faceWall = Math_Atan2S(-COLPOLY_GET_NORMAL(wall->normal.x),
+                                     -COLPOLY_GET_NORMAL(wall->normal.z));
+    if (ABS((s16)(faceWall - approachYaw)) > 0x3000) return false;
+    Vec3f verts[3];
+    CollisionPoly_GetVerticesByBgId(wall, bgId, &play->colCtx, verts);
+    *outBottomY = verts[0].y;
+    *outTopY = verts[0].y;
+    for (s32 i = 1; i < 3; ++i) {
+        if (verts[i].y < *outBottomY) *outBottomY = verts[i].y;
+        if (verts[i].y > *outTopY) *outTopY = verts[i].y;
+    }
+    if (*outTopY < actor->world.pos.y + 12.0f) return false;
+    *outAnchor = actor->world.pos;
+    *outFacing = faceWall;
+    return true;
 }
 
 // Geometry shared by the original P1 crawlspace gate and the local P2 pilot.
