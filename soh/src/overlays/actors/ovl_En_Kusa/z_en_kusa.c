@@ -43,12 +43,17 @@ static s16 rotSpeedYtarget = 0;
 static s16 rotSpeedY = 0;
 
 const ActorInit En_Kusa_InitVars = {
-    extern f32 ShipCrewActor_GetClosestLocalPlayerXZDist(PlayState * play, Actor* actor);
-const f32 nearestLocalPlayer = ShipCrewActor_GetClosestLocalPlayerXZDist(play, &this->actor);
-ACTOR_EN_KUSA, ACTORCAT_PROP, FLAGS, OBJECT_GAMEPLAY_KEEP, sizeof(EnKusa), (ActorFunc)EnKusa_Init,
-    (ActorFunc)EnKusa_Destroy, (ActorFunc)EnKusa_Update, NULL, NULL,
-}
-;
+    ACTOR_EN_KUSA,
+    ACTORCAT_PROP,
+    FLAGS,
+    OBJECT_GAMEPLAY_KEEP,
+    sizeof(EnKusa),
+    (ActorFunc)EnKusa_Init,
+    (ActorFunc)EnKusa_Destroy,
+    (ActorFunc)EnKusa_Update,
+    NULL,
+    NULL,
+};
 
 static s16 sObjectIds[] = { OBJECT_GAMEPLAY_FIELD_KEEP, OBJECT_KUSA, OBJECT_KUSA };
 
@@ -303,6 +308,8 @@ void EnKusa_SetupMain(EnKusa* this) {
 }
 
 void EnKusa_Main(EnKusa* this, PlayState* play) {
+    extern f32 ShipCrewActor_GetClosestLocalPlayerXZDist(PlayState* play, Actor* actor);
+    const f32 nearestLocalPlayer = ShipCrewActor_GetClosestLocalPlayerXZDist(play, &this->actor);
     s32 pad;
 
     if (Actor_HasParent(&this->actor, play)) {
