@@ -539,6 +539,8 @@ static u32 sTouchedWallFlags = 0;
 // Set only while P2 executes P1's native climb callbacks; scoped globals
 // are immediately restored after P2's action returns.
 static s32 sShipCrewPilotNativeClimb = false;
+static s32 sShipCrewPilotNativeCrawl = false;
+static s32 sShipCrewPilotNativeLedge = false;
 static u32 sConveyorSpeed = 0;
 static s16 sIsFloorConveyor = false;
 static s16 sConveyorYaw = 0;
@@ -8232,7 +8234,10 @@ s32 Player_TryLeavingCrawlspace(Player* this, PlayState* play) {
                     this->actor.shape.rot.y = this->actor.wallYaw + 0x8000;
                     Player_AnimPlayOnce(play, this, &gPlayerAnim_link_child_tunnel_end);
                     Player_StartAnimMovement(play, this, 0x9D);
-                    OnePointCutscene_Init(play, 9601, 999, NULL, CAM_ID_MAIN);
+                    // P2 owns an independent camera. The P1 one-point crawl
+                    // camera targets CAM_ID_MAIN and would steal P1's view.
+                    if (!sShipCrewPilotNativeCrawl)
+                        OnePointCutscene_Init(play, 9601, 999, NULL, CAM_ID_MAIN);
                 } else {
                     // Leaving a crawlspace backwards
                     this->actor.shape.rot.y = this->actor.wallYaw;
@@ -8240,7 +8245,8 @@ s32 Player_TryLeavingCrawlspace(Player* this, PlayState* play) {
                                          Animation_GetLastFrame(&gPlayerAnim_link_child_tunnel_start), 0.0f,
                                          ANIMMODE_ONCE, 0.0f);
                     Player_StartAnimMovement(play, this, 0x9D);
-                    OnePointCutscene_Init(play, 9602, 999, NULL, CAM_ID_MAIN);
+                    if (!sShipCrewPilotNativeCrawl)
+                        OnePointCutscene_Init(play, 9602, 999, NULL, CAM_ID_MAIN);
                 }
             }
 
@@ -10631,7 +10637,9 @@ void Player_Action_80845668(Player* this, PlayState* play) {
             return;
         }
     } else {
-        temp2 = Player_TryActionInterrupt(play, this, &this->skelAnime, 4.0f);
+        // Keep the original climb animation/action, but don't let P2's
+        // ledge action dispatch P1's global item/UI interrupt handlers.
+        temp2 = sShipCrewPilotNativeLedge ? 1 : Player_TryActionInterrupt(play, this, &this->skelAnime, 4.0f);
 
         if (temp2 == 0) {
             this->stateFlags1 &= ~(PLAYER_STATE1_CLIMBING_LEDGE | PLAYER_STATE1_JUMPING);
@@ -13840,6 +13848,179 @@ s32 ShipCrewPlayer_UpdateNativeClimbForPilot(PlayState* play, Player* player, In
     ShipCrewPlayer_QueueNativeAnimMovement(play, player);
     AnimationContext_SetNextQueue(play);
     return true;
+}
+
+typedef struct {
+    Vec3f interactWallCheckResult;
+    s32 floorType;
+    u32 touchedWallFlags;
+    u32 conveyorSpeed;
+    s16 isFloorConveyor;
+    s16 conveyorYaw;
+    f32 yDistToFloor;
+    s32 prevFloorProperty;
+    s32 shapeYawToTouchedWall;
+    s32 worldYawToTouchedWall;
+    s16 floorShapePitch;
+} ShipCrewPlayerStaticCollisionState;
+
+static void ShipCrewPlayer_SaveStaticCollisionState(ShipCrewPlayerStaticCollisionState* state) {
+    state->interactWallCheckResult = sInteractWallCheckResult;
+    state->floorType = sFloorType;
+    state->touchedWallFlags = sTouchedWallFlags;
+    state->conveyorSpeed = sConveyorSpeed;
+    state->isFloorConveyor = sIsFloorConveyor;
+    state->conveyorYaw = sConveyorYaw;
+    state->yDistToFloor = sYDistToFloor;
+    state->prevFloorProperty = sPrevFloorProperty;
+    state->shapeYawToTouchedWall = sShapeYawToTouchedWall;
+    state->worldYawToTouchedWall = sWorldYawToTouchedWall;
+    state->floorShapePitch = sFloorShapePitch;
+}
+
+static void ShipCrewPlayer_RestoreStaticCollisionState(const ShipCrewPlayerStaticCollisionState* state) {
+    sInteractWallCheckResult = state->interactWallCheckResult;
+    sFloorType = state->floorType;
+    sTouchedWallFlags = state->touchedWallFlags;
+    sConveyorSpeed = state->conveyorSpeed;
+    sIsFloorConveyor = state->isFloorConveyor;
+    sConveyorYaw = state->conveyorYaw;
+    sYDistToFloor = state->yDistToFloor;
+    sPrevFloorProperty = state->prevFloorProperty;
+    sShapeYawToTouchedWall = state->shapeYawToTouchedWall;
+    sWorldYawToTouchedWall = state->worldYawToTouchedWall;
+    sFloorShapePitch = state->floorShapePitch;
+}
+
+void ShipCrewPlayer_BeginNativeCrawl(PlayState* play, Player* player, const Vec3f* center) {
+    if (play == NULL || player == NULL || center == NULL || player->actor.wallPoly == NULL)
+        return;
+
+    CollisionPoly* wall = player->actor.wallPoly;
+    const f32 nx = COLPOLY_GET_NORMAL(wall->normal.x);
+    const f32 nz = COLPOLY_GET_NORMAL(wall->normal.z);
+    const f32 dist = player->distToInteractWall > 0.0f ? player->distToInteractWall
+                                                       : player->ageProperties->wallCheckRadius - 1.0f;
+
+    AnimationContext_SetNextQueue(play);
+    player->stateFlags2 |= PLAYER_STATE2_CRAWLING;
+    player->actor.shape.rot.y = player->yaw = player->actor.wallYaw + 0x8000;
+    player->actor.world.rot.y = player->yaw;
+    player->actor.world.pos.x = center->x + dist * nx;
+    player->actor.world.pos.z = center->z + dist * nz;
+    player->actor.prevPos = player->actor.world.pos;
+    player->actor.velocity.y = player->linearVelocity = player->actor.speedXZ = 0.0f;
+    player->actor.gravity = 0.0f;
+    func_80832224(player);
+    Player_SetupActionPreserveAnimMovement(play, player, Player_Action_8084C760, 0);
+    Player_AnimPlayOnce(play, player, &gPlayerAnim_link_child_tunnel_start);
+    Player_StartAnimMovement(play, player, 0x9D);
+    ShipCrewPlayer_QueueNativeAnimMovement(play, player);
+    AnimationContext_SetNextQueue(play);
+}
+
+s32 ShipCrewPlayer_IsNativeCrawlAction(Player* player) {
+    return player != NULL &&
+           (player->actionFunc == Player_Action_8084C760 || player->actionFunc == Player_Action_8084C81C);
+}
+
+s32 ShipCrewPlayer_UpdateNativeCrawlForPilot(PlayState* play, Player* player, Input* input) {
+    if (play == NULL || player == NULL || input == NULL || !ShipCrewPlayer_IsNativeCrawlAction(player))
+        return false;
+
+    ShipCrewPlayerStaticCollisionState saved;
+    ShipCrewPlayer_SaveStaticCollisionState(&saved);
+    Input* previousInput = sControlInput;
+    const s32 previousPilotCrawl = sShipCrewPilotNativeCrawl;
+
+    AnimationContext_SetNextQueue(play);
+    sControlInput = input;
+    sShipCrewPilotNativeCrawl = true;
+    // This is the SAME crawl-sized wall/floor/ceiling processing P1 uses.
+    // Keeping the pilot's NPC actor category avoids P1-only audio/light side
+    // effects; the separate exit helper handles global scene transitions.
+    Player_ProcessSceneCollision(play, player);
+    player->actionFunc(player, play);
+    ShipCrewPlayer_QueueNativeAnimMovement(play, player);
+
+    sShipCrewPilotNativeCrawl = previousPilotCrawl;
+    sControlInput = previousInput;
+    ShipCrewPlayer_RestoreStaticCollisionState(&saved);
+    AnimationContext_SetNextQueue(play);
+    return ShipCrewPlayer_IsNativeCrawlAction(player);
+}
+
+s32 ShipCrewPlayer_HandlePilotSceneExit(PlayState* play, Player* player) {
+    if (play == NULL || player == NULL || player->actor.floorPoly == NULL ||
+        play->transitionTrigger != TRANS_TRIGGER_OFF)
+        return false;
+
+    ShipCrewPlayerStaticCollisionState saved;
+    ShipCrewPlayer_SaveStaticCollisionState(&saved);
+    const u8 oldCategory = player->actor.category;
+    CollisionPoly* floor = player->actor.floorPoly;
+    const s32 bgId = player->actor.floorBgId;
+
+    player->floorProperty = func_80041EA4(&play->colCtx, floor, bgId);
+    sFloorType = SurfaceType_GetFloorType(&play->colCtx, floor, bgId);
+    sYDistToFloor = player->actor.world.pos.y - player->actor.floorHeight;
+    // The native exit routine intentionally gates on ACTORCAT_PLAYER.
+    // Scope that identity to this one call so a P2 exit loads the shared
+    // scene for everyone without turning P2 into the engine's primary player.
+    player->actor.category = ACTORCAT_PLAYER;
+    const s32 result = Player_HandleExitsAndVoids(play, player, floor, bgId);
+    player->actor.category = oldCategory;
+
+    ShipCrewPlayer_RestoreStaticCollisionState(&saved);
+    return result;
+}
+
+s32 ShipCrewPlayer_TryNativeLedgeForPilot(PlayState* play, Player* player, Input* input) {
+    if (play == NULL || player == NULL || input == NULL || player->ageProperties == NULL)
+        return false;
+
+    ShipCrewPlayerStaticCollisionState saved;
+    ShipCrewPlayer_SaveStaticCollisionState(&saved);
+    Input* previousInput = sControlInput;
+    const s32 previousPilotLedge = sShipCrewPilotNativeLedge;
+    AnimationContext_SetNextQueue(play);
+    sControlInput = input;
+    sShipCrewPilotNativeLedge = true;
+
+    // Reuse P1's exact wall/fence/ledge classification and delay counters.
+    Player_ProcessSceneCollision(play, player);
+    const s32 started = Player_ActionHandler_12(player, play);
+
+    sShipCrewPilotNativeLedge = previousPilotLedge;
+    sControlInput = previousInput;
+    ShipCrewPlayer_RestoreStaticCollisionState(&saved);
+    AnimationContext_SetNextQueue(play);
+    return started;
+}
+
+s32 ShipCrewPlayer_IsNativeLedgeAction(Player* player) {
+    return player != NULL && player->actionFunc == Player_Action_80845668;
+}
+
+s32 ShipCrewPlayer_UpdateNativeLedgeForPilot(PlayState* play, Player* player, Input* input) {
+    if (play == NULL || player == NULL || input == NULL || !ShipCrewPlayer_IsNativeLedgeAction(player))
+        return false;
+
+    ShipCrewPlayerStaticCollisionState saved;
+    ShipCrewPlayer_SaveStaticCollisionState(&saved);
+    Input* previousInput = sControlInput;
+    const s32 previousPilotLedge = sShipCrewPilotNativeLedge;
+    AnimationContext_SetNextQueue(play);
+    sControlInput = input;
+    sShipCrewPilotNativeLedge = true;
+    Player_ProcessSceneCollision(play, player);
+    player->actionFunc(player, play);
+    ShipCrewPlayer_QueueNativeAnimMovement(play, player);
+    sShipCrewPilotNativeLedge = previousPilotLedge;
+    sControlInput = previousInput;
+    ShipCrewPlayer_RestoreStaticCollisionState(&saved);
+    AnimationContext_SetNextQueue(play);
+    return ShipCrewPlayer_IsNativeLedgeAction(player);
 }
 
 static AnimSfxEntry D_808548B4[] = {
