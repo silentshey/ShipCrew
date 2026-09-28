@@ -5481,13 +5481,26 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
             // Only consider a ladder if the ground really falls away on
             // this side. Otherwise pressing DOWN near an ordinary wall must
             // not grab it or teleport the second player.
-            Vec3f ahead = pos;
-            ahead.x += dx * (radius + 24.0f);
-            ahead.z += dz * (radius + 24.0f);
-            ahead.y += 50.0f;
-            CollisionPoly* aheadPoly = NULL;
-            const f32 aheadY = BgCheck_EntityRaycastFloor1(&play->colCtx, &aheadPoly, &ahead);
-            if (aheadPoly != NULL && aheadY > pos.y - 35.0f)
+            // P1 tests the brink's tagged wall contact. P2's old single
+            // radius+24 floor probe often still landed on the upper platform
+            // and rejected legitimate ladder-top entry. Check multiple
+            // positions beyond the brink, but ONLY attach if the ray below
+            // subsequently hits an actual ladder or ladder-top polygon.
+            const f32 lipOffsets[] = { radius + 18.0f, radius + 36.0f, radius + 54.0f };
+            s32 lipDrops = false;
+            for (s32 i = 0; i < 3; ++i) {
+                Vec3f ahead = pos;
+                ahead.x += dx * lipOffsets[i];
+                ahead.z += dz * lipOffsets[i];
+                ahead.y += 50.0f;
+                CollisionPoly* aheadPoly = NULL;
+                const f32 aheadY = BgCheck_EntityRaycastFloor1(&play->colCtx, &aheadPoly, &ahead);
+                if (aheadPoly == NULL || aheadY <= pos.y - 35.0f) {
+                    lipDrops = true;
+                    break;
+                }
+            }
+            if (!lipDrops)
                 continue;
             start.x -= dx * 4.0f;
             start.z -= dz * 4.0f;
@@ -5502,7 +5515,9 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
             end.z += dz * (radius + 16.0f);
         }
         s32 found = BgCheck_EntityLineTest1(&play->colCtx, &start, &end, &hit, &wall, true, false, false, true, &bgId);
-        if (fromTop && (!found || wall == NULL)) {
+        if (fromTop && (!found || wall == NULL ||
+                        !(SurfaceType_GetWallFlags(&play->colCtx, wall, bgId) &
+                          (WALL_FLAG_LADDER | WALL_FLAG_LADDER_TOP)))) {
             // P1 attaches to the tagged wall/top collision at the lip.
             // A single diagonal ray easily misses narrow ladder-top
             // polygons, particularly before the player's feet leave ground.
@@ -5517,8 +5532,10 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
             end.y -= 100.0f;
             found = BgCheck_EntityLineTest1(&play->colCtx, &start, &end, &hit, &wall, true, false, false, true, &bgId);
         }
-        if ((!found || wall == NULL) && player->actor.wallPoly != NULL &&
-            (player->actor.bgCheckFlags & BGCHECKFLAG_WALL)) {
+        if ((!found || wall == NULL ||
+             !(SurfaceType_GetWallFlags(&play->colCtx, wall, bgId) &
+               (WALL_FLAG_LADDER | (fromTop ? WALL_FLAG_LADDER_TOP : 0)))) &&
+            player->actor.wallPoly != NULL && (player->actor.bgCheckFlags & BGCHECKFLAG_WALL)) {
             // P1 obtains the actual touching wall from collision processing.
             // Reuse that verified contact only when its surface flags
             // identify a ladder, never attach P2 to arbitrary walls.
@@ -5556,7 +5573,13 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
         outAnchor->x = hit.x + side * nx * (radius - 1.0f);
         outAnchor->z = hit.z + side * nz * (radius - 1.0f);
         outAnchor->y = pos.y;
-        *outFacing = side > 0.0f ? (s16)(Math_Atan2S(nz, nx) + 0x8000) : Math_Atan2S(nz, nx);
+        // P1's native top entry (climb_startB) faces AWAY from the
+        // tagged wall, while bottom entry (climb_startA) faces INTO it.
+        // Giving both the same yaw made top descent immediately act like
+        // bottom ascent and sent upper-platform dismount probes backward.
+        const s16 towardWall =
+            side > 0.0f ? (s16)(Math_Atan2S(nz, nx) + 0x8000) : Math_Atan2S(nz, nx);
+        *outFacing = fromTop ? (s16)(towardWall + 0x8000) : towardWall;
         *outTopY = fromTop ? pos.y : maxY;
         *outBottomY = fromTop ? minY : pos.y;
         // For segmented ladder polygons there may be a lower ground floor
