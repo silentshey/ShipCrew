@@ -7269,6 +7269,13 @@ void func_8083DF68(Player* this, f32 arg1, s16 arg2) {
     Math_ScaledStepToS(&this->yaw, arg2, REG(27));
 }
 
+// ShipCrew: original native run steering exposed for P2 without changing
+// sControlInput, sControlStickMagnitude, or GET_PLAYER. The normal player
+// continues to call func_8083DF68 through its existing action machine.
+void ShipCrewPlayer_ApplyNativeRunMotion(Player* player, f32 speedTarget, s16 yawTarget) {
+    func_8083DF68(player, speedTarget, yawTarget);
+}
+
 void func_8083DFE0(Player* this, f32* arg1, s16* arg2) {
     s16 yawDiff = this->yaw - *arg2;
 
