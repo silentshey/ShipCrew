@@ -421,8 +421,9 @@ bool Pilot_HasLandingSupport(PlayState* play, Player* player, const Vec3f& landi
     if (player->ageProperties == nullptr)
         return false;
     const f32 radius = std::max(4.0f, player->ageProperties->wallCheckRadius * 0.6f);
-    const f32 offsets[5][2] = {{0.0f, 0.0f}, {radius, 0.0f}, {-radius, 0.0f},
-                                {0.0f, radius}, {0.0f, -radius}};
+    const f32 offsets[5][2] = {
+        { 0.0f, 0.0f }, { radius, 0.0f }, { -radius, 0.0f }, { 0.0f, radius }, { 0.0f, -radius }
+    };
     for (s32 i = 0; i < (fullFootprint ? 5 : 1); ++i) {
         Vec3f probe = landing;
         probe.x += offsets[i][0];
@@ -576,8 +577,7 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, f32 worldX, f32 worldZ,
             sPilot.ladderDismountStart.z + (sPilot.ladderDismountGoal.z - sPilot.ladderDismountStart.z) * progress;
         if (finished) {
             actor->world.pos = sPilot.ladderDismountGoal;
-            const bool supported = Pilot_HasLandingSupport(play, player, actor->world.pos,
-                                                           sPilot.ladderDismountAtTop);
+            const bool supported = Pilot_HasLandingSupport(play, player, actor->world.pos, sPilot.ladderDismountAtTop);
             Actor_UpdateBgCheckInfo(play, actor, 26.0f, player->ageProperties->wallCheckRadius,
                                     player->ageProperties->ceilingCheckHeight, 0x3F);
             if (supported) {
@@ -728,8 +728,8 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
         } else {
             jumpSpeed = IREG(68) / 100.0f + IREG(69) * player->linearVelocity / 1000.0f;
         }
-        SPDLOG_INFO("[ShipCrew] P2 autojump ground-leave: pos=({}, {}, {}) floor={} speed={}",
-                    actor->world.pos.x, actor->world.pos.y, actor->world.pos.z, actor->floorHeight, actor->speedXZ);
+        SPDLOG_INFO("[ShipCrew] P2 autojump ground-leave: pos=({}, {}, {}) floor={} speed={}", actor->world.pos.x,
+                    actor->world.pos.y, actor->world.pos.z, actor->floorHeight, actor->speedXZ);
         Pilot_BeginJump(player, std::max(4.0f, jumpSpeed));
         return false;
     }
@@ -792,8 +792,8 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
     sPilot.ledgeFacing = facing;
     sPilot.ledgeProbeFrames = 0;
     if (type == PLAYER_LEDGE_CLIMB_4) {
-        SPDLOG_INFO("[ShipCrew] P2 high-step: rise={} pos=({}, {}, {})", rise, actor->world.pos.x,
-                    actor->world.pos.y, actor->world.pos.z);
+        SPDLOG_INFO("[ShipCrew] P2 high-step: rise={} pos=({}, {}, {})", rise, actor->world.pos.x, actor->world.pos.y,
+                    actor->world.pos.z);
         sPilot.traversal = PilotTraversal::HighStepWindup;
         actor->speedXZ = player->linearVelocity = actor->velocity.y = 0.0f;
         actor->gravity = 0.0f;
