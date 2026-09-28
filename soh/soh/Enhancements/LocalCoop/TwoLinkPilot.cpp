@@ -30,6 +30,8 @@ void ShipCrewPlayer_ApplyNativeRunMotion(Player* player, f32 speedTarget, s16 ya
 f32 ShipCrewPlayer_CalcGroundSpeedTarget(f32 magnitude, f32 speedCap, s16 floorPitch, s32 curved);
 f32 ShipCrewPlayer_CalcNativeAnalogSpeed(Player* player, f32 magnitude, s32 curved);
 void ShipCrewPlayer_ApplyNativeAirMotion(Player* player, f32 speedTarget, s16 yawTarget);
+void ShipCrewPlayer_ResetNativeGravity(Player* player);
+s32 ShipCrewPlayer_ShouldEnterFallAnimation(Player* player, s32 zeroStage, f32 fallDistance);
 s32 ShipCrewPlayer_ApplyNativeIdleBrake(Player* player);
 LinkAnimationHeader* ShipCrewPlayer_SelectNativeAutoJump(Player* player, f32* verticalSpeed);
 s32 ShipCrewPlayer_ShouldNativeAutoJump(Player* player, s32 prevFloorProperty, f32 yDistToFloor, s16 yawDelta);
@@ -204,7 +206,10 @@ void Pilot_ClearTraversal(Actor* actor, Player* player) {
     sPilot.traversal = PilotTraversal::None;
     sPilot.ledgeProbeFrames = 0;
     player->stateFlags1 &= ~(PLAYER_STATE1_HANGING_OFF_LEDGE | PLAYER_STATE1_CLIMBING_LEDGE | PLAYER_STATE1_JUMPING);
-    actor->gravity = kPilotGravity;
+    if (CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0)
+        ShipCrewPlayer_ResetNativeGravity(player);
+    else
+        actor->gravity = kPilotGravity;
     actor->shape.yOffset = 0.0f;
 }
 
@@ -246,7 +251,15 @@ void Pilot_BeginClimb(Player* player, PlayState* play, s32 type, bool fromHang) 
 
 void Pilot_BeginJump(Player* player, f32 verticalSpeed) {
     Actor* actor = &player->actor;
-    actor->gravity = sPilot.lockedTarget != nullptr ? -1.2f : kPilotGravity;
+    // P1 initializes vertical motion with its runtime gravity register and
+    // a -20 terminal velocity; hostile Z falls use P1's -1.2 override.
+    if (CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0) {
+        ShipCrewPlayer_ResetNativeGravity(player);
+        if (sPilot.lockedTarget != nullptr)
+            actor->gravity = -1.2f;
+    } else {
+        actor->gravity = kPilotGravity;
+    }
     actor->velocity.y = verticalSpeed;
     actor->bgCheckFlags &= ~BGCHECKFLAG_GROUND;
     player->stateFlags1 |= PLAYER_STATE1_JUMPING;
@@ -381,7 +394,10 @@ void Pilot_ClearLadder(Player* player) {
     sPilot.ladderCooldown = 16;
     player->stateFlags1 &= ~PLAYER_STATE1_CLIMBING_LADDER;
     player->stateFlags2 &= ~PLAYER_STATE2_STATIONARY_LADDER;
-    player->actor.gravity = kPilotGravity;
+    if (CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0)
+        ShipCrewPlayer_ResetNativeGravity(player);
+    else
+        player->actor.gravity = kPilotGravity;
     player->actor.shape.yOffset = 0.0f;
 }
 
@@ -978,8 +994,12 @@ void Pilot_Init(Actor* actor, PlayState* play) {
     play->func_11D54(player, play);
     actor->flags |= ACTOR_FLAG_LOCK_ON_DISABLED;
     actor->colChkInfo.mass = MASS_IMMOVABLE;
-    actor->gravity = kPilotGravity;
-    actor->minVelocityY = kPilotTerminalVelocity;
+    if (CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0)
+        ShipCrewPlayer_ResetNativeGravity(player);
+    else {
+        actor->gravity = kPilotGravity;
+        actor->minVelocityY = kPilotTerminalVelocity;
+    }
 
     sPilot = {};
     sPilot.actor = actor;
@@ -1375,6 +1395,14 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         Actor_SetFocus(actor, 40.0f);
         return;
     }
+    // P1 refreshes its native gravity every movement frame rather than
+    // keeping the standalone pilot's hard-coded -1.0/-18 values.
+    // This path runs only after special ladder/climb actions have returned.
+    if (nativeMovement) {
+        ShipCrewPlayer_ResetNativeGravity(player);
+        if (sPilot.lockedTarget != nullptr && !(actor->bgCheckFlags & BGCHECKFLAG_GROUND))
+            actor->gravity = -1.2f;
+    }
     const bool fallingBeforeMove = actor->velocity.y < -1.0f;
     Actor_MoveXZGravity(actor);
     if (nativeMovement && player->ageProperties != nullptr) {
@@ -1469,14 +1497,24 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                                    : Pilot_Animation(gPlayerAnim_link_normal_landing_roll_free);
         mode = ANIMMODE_ONCE;
     } else if (!grounded) {
-        // Native jump startup retains forward momentum; after the apex use
-        // the original falling-loop pose, rather than restarting jump every
-        // frame. No manual A-button jump is introduced.
-        if (nativeTraversal && actor->velocity.y < 0.0f) {
+        // A P1 autojump retains the actual jump pose while descending from
+        // its apex; P1 changes to the static falling/landing pose only after
+        // dropping below takeoff height or colliding with a wall. P2 used to
+        // flip immediately at velocity.y < 0, making it LOOK like gravity
+        // suddenly accelerated even when its physical velocity was normal.
+        if (nativeTraversal && sPilot.traversal == PilotTraversal::AutoJump &&
+            sPilot.nativeAutoJumpAnim != nullptr) {
+            const f32 fallDistance = sPilot.takeoffY - actor->world.pos.y;
+            if (ShipCrewPlayer_ShouldEnterFallAnimation(player, false, fallDistance)) {
+                animation = Pilot_Animation(gPlayerAnim_link_normal_landing);
+                mode = ANIMMODE_ONCE;
+            } else {
+                animation = sPilot.nativeAutoJumpAnim;
+                mode = ANIMMODE_ONCE;
+            }
+        } else if (nativeTraversal && actor->velocity.y < 0.0f) {
+            // Ordinary unassisted falls still use P1's fall-wait pose.
             animation = Pilot_Animation(gPlayerAnim_link_normal_landing_wait);
-        } else if (nativeTraversal && sPilot.traversal == PilotTraversal::AutoJump &&
-                   sPilot.nativeAutoJumpAnim != nullptr) {
-            animation = sPilot.nativeAutoJumpAnim;
         } else {
             animation = nativeMovement && actor->speedXZ > 4.0f ? Pilot_Animation(gPlayerAnim_link_normal_run_jump)
                                                                 : Pilot_Animation(gPlayerAnim_link_normal_jump);
@@ -1546,8 +1584,14 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     }
 
     if (player->skelAnime.animation != animation) {
-        LinkAnimation_Change(play, &player->skelAnime, animation, 1.0f, 0.0f, Animation_GetLastFrame(animation), mode,
-                             -3.0f);
+        const bool nativeFrozenFallPose =
+            nativeTraversal && !grounded && sPilot.traversal == PilotTraversal::AutoJump &&
+            animation == Pilot_Animation(gPlayerAnim_link_normal_landing);
+        // P1 enters its falling pose using start=end=0 with an 8-frame
+        // transition; playing the entire landing animation mid-air is wrong.
+        LinkAnimation_Change(play, &player->skelAnime, animation, 1.0f, 0.0f,
+                             nativeFrozenFallPose ? 0.0f : Animation_GetLastFrame(animation), mode,
+                             nativeFrozenFallPose ? 8.0f : -3.0f);
     }
     // Native Link's gait speed follows locomotion rather than replaying one
     // fixed-rate walk/run loop across every analog-stick magnitude.
