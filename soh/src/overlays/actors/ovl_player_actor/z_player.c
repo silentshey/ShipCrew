@@ -7776,7 +7776,8 @@ s32 Player_ActionHandler_2(Player* this, PlayState* play) {
                         Player_UseItem(play, this, ITEM_LAST_USED);
                     }
                 } else {
-                    if ((interactedActor->id == ACTOR_EN_ISHI) && !ShipCrewPlayer_CanLiftContextActor(interactedActor)) {
+                    if ((interactedActor->id == ACTOR_EN_ISHI) &&
+                        !ShipCrewPlayer_CanLiftContextActor(interactedActor)) {
                         return 0;
                     }
 
@@ -7959,14 +7960,14 @@ void Player_SetupDismountLadder(Player* this, LinkAnimationHeader* anim, PlaySta
 // action callbacks, so expose the native surface test and polygon bounds.
 s32 ShipCrewPlayer_IsNativeFreeClimbWall(PlayState* play, Actor* actor) {
     return play != NULL && actor != NULL && actor->wallPoly != NULL &&
-           (SurfaceType_GetWallFlags(&play->colCtx, actor->wallPoly, actor->wallBgId) &
-            WALL_FLAG_CLIMBABLE) != 0;
+           (SurfaceType_GetWallFlags(&play->colCtx, actor->wallPoly, actor->wallBgId) & WALL_FLAG_CLIMBABLE) != 0;
 }
 
-s32 ShipCrewPlayer_QueryNativeVine(PlayState* play, Player* player, s16 approachYaw,
-                                  Vec3f* outAnchor, s16* outFacing, f32* outBottomY, f32* outTopY) {
-    if (play == NULL || player == NULL || player->ageProperties == NULL ||
-        outAnchor == NULL || outFacing == NULL || outBottomY == NULL || outTopY == NULL) return false;
+s32 ShipCrewPlayer_QueryNativeVine(PlayState* play, Player* player, s16 approachYaw, Vec3f* outAnchor, s16* outFacing,
+                                   f32* outBottomY, f32* outTopY) {
+    if (play == NULL || player == NULL || player->ageProperties == NULL || outAnchor == NULL || outFacing == NULL ||
+        outBottomY == NULL || outTopY == NULL)
+        return false;
     Actor* actor = &player->actor;
     CollisionPoly* wall = NULL;
     s32 bgId = BGCHECK_SCENE;
@@ -7981,18 +7982,21 @@ s32 ShipCrewPlayer_QueryNativeVine(PlayState* play, Player* player, s16 approach
     if (!BgCheck_EntityLineTest1(&play->colCtx, &from, &to, &hit, &wall, true, false, false, true, &bgId) ||
         wall == NULL || !(SurfaceType_GetWallFlags(&play->colCtx, wall, bgId) & WALL_FLAG_CLIMBABLE))
         return false;
-    const s16 faceWall = Math_Atan2S(-COLPOLY_GET_NORMAL(wall->normal.x),
-                                     -COLPOLY_GET_NORMAL(wall->normal.z));
-    if (ABS((s16)(faceWall - approachYaw)) > 0x3000) return false;
+    const s16 faceWall = Math_Atan2S(-COLPOLY_GET_NORMAL(wall->normal.x), -COLPOLY_GET_NORMAL(wall->normal.z));
+    if (ABS((s16)(faceWall - approachYaw)) > 0x3000)
+        return false;
     Vec3f verts[3];
     CollisionPoly_GetVerticesByBgId(wall, bgId, &play->colCtx, verts);
     *outBottomY = verts[0].y;
     *outTopY = verts[0].y;
     for (s32 i = 1; i < 3; ++i) {
-        if (verts[i].y < *outBottomY) *outBottomY = verts[i].y;
-        if (verts[i].y > *outTopY) *outTopY = verts[i].y;
+        if (verts[i].y < *outBottomY)
+            *outBottomY = verts[i].y;
+        if (verts[i].y > *outTopY)
+            *outTopY = verts[i].y;
     }
-    if (*outTopY < actor->world.pos.y + 12.0f) return false;
+    if (*outTopY < actor->world.pos.y + 12.0f)
+        return false;
     *outAnchor = actor->world.pos;
     *outFacing = faceWall;
     return true;
@@ -8016,10 +8020,14 @@ s32 ShipCrewPlayer_QueryCrawlspace(PlayState* play, Player* player, Vec3f* outCe
     f32 minZ = vertices[0].z;
     f32 maxZ = vertices[0].z;
     for (s32 i = 1; i < 3; ++i) {
-        if (minX > vertices[i].x) minX = vertices[i].x;
-        else if (maxX < vertices[i].x) maxX = vertices[i].x;
-        if (minZ > vertices[i].z) minZ = vertices[i].z;
-        else if (maxZ < vertices[i].z) maxZ = vertices[i].z;
+        if (minX > vertices[i].x)
+            minX = vertices[i].x;
+        else if (maxX < vertices[i].x)
+            maxX = vertices[i].x;
+        if (minZ > vertices[i].z)
+            minZ = vertices[i].z;
+        else if (maxZ < vertices[i].z)
+            maxZ = vertices[i].z;
     }
     const f32 centerX = (minX + maxX) * 0.5f;
     const f32 centerZ = (minZ + maxZ) * 0.5f;
@@ -8069,7 +8077,8 @@ s32 Player_TryEnteringCrawlspace(Player* this, PlayState* play, u32 interactWall
 // Native P1 strength rule factored for P2's independent context candidate scan.
 // Candidate selection still belongs to the relevant player's own interaction range.
 s32 ShipCrewPlayer_CanLiftContextActor(Actor* actor) {
-    if (actor == NULL) return false;
+    if (actor == NULL)
+        return false;
     switch (actor->id) {
         case ACTOR_EN_ISHI:
             return !((actor->params & 0xF) == 1 && Player_GetStrength() < PLAYER_STR_SILVER_G);
