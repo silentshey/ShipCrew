@@ -5456,20 +5456,20 @@ s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* outRise, Vec
 // fromTop probes down and outward from the brink, where the ladder surface
 // is generally below P2's feet instead of at shoulder height.
 s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec3f* outAnchor, s16* outFacing,
-                               f32* outBottomY, f32* outTopY) {
+                               f32* outBottomY, f32* outTopY, s16 approachYaw) {
     if (play == NULL || player == NULL || player->ageProperties == NULL || outAnchor == NULL || outFacing == NULL ||
         outBottomY == NULL || outTopY == NULL) {
         return false;
     }
 
-    const f32 forwardX = Math_SinS(player->yaw);
-    const f32 forwardZ = Math_CosS(player->yaw);
+    const f32 forwardX = Math_SinS(approachYaw);
+    const f32 forwardZ = Math_CosS(approachYaw);
     const f32 radius = player->ageProperties->wallCheckRadius;
     const Vec3f pos = player->actor.world.pos;
-    // At the top allow either orientation: the player can walk to the lip
-    // facing the ladder or back up to it. The actual flagged wall and a real
-    // floor drop still must be present in either case.
-    for (s32 direction = 1; direction >= (fromTop ? -1 : 1); direction -= 2) {
+    // Use P2's actual world travel direction. A backwards camera-relative
+    // stick is already represented by the appropriate world yaw; probing
+    // behind it could grab a ladder the player is walking away from.
+    for (s32 direction = 1; direction > 0; direction -= 2) {
         const f32 dx = forwardX * direction;
         const f32 dz = forwardZ * direction;
         Vec3f start = pos;
