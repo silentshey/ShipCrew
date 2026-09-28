@@ -7271,6 +7271,13 @@ void func_8083D53C(PlayState* play, Player* this) {
     }
 }
 
+// The native gravitational baseline is defined by P1's live REG(68), not
+// a fixed P2 approximation. Explicit Player* avoids P1-global state.
+void ShipCrewPlayer_ResetNativeGravity(Player* player) {
+    player->actor.minVelocityY = -20.0f;
+    player->actor.gravity = REG(68) / 100.0f;
+}
+
 void func_8083D6EC(PlayState* play, Player* this) {
     Vec3f ripplePos;
     f32 temp1;
@@ -7278,8 +7285,7 @@ void func_8083D6EC(PlayState* play, Player* this) {
     f32 temp3;
     f32 temp4;
 
-    this->actor.minVelocityY = -20.0f;
-    this->actor.gravity = REG(68) / 100.0f;
+    ShipCrewPlayer_ResetNativeGravity(this);
 
     if (func_8083816C(sFloorType)) {
         temp1 = fabsf(this->linearVelocity) * 20.0f;
@@ -9961,6 +9967,15 @@ void func_8084409C(PlayState* play, Player* this, f32 speedXZ, f32 velocityY) {
     }
 }
 
+// P1 only switches its jumping pose to the neutral fall/landing pose
+// after starting to descend AND either meeting a wall, being in its
+// zero-stage falling action, or dropping below the jump's origin height.
+// P2 can evaluate the same test against its OWN fall start and actor.
+s32 ShipCrewPlayer_ShouldEnterFallAnimation(Player* player, s32 zeroStage, f32 fallDistance) {
+    return player->actor.velocity.y < 0.0f &&
+           ((player->actor.bgCheckFlags & BGCHECKFLAG_WALL) || zeroStage || fallDistance > 0.0f);
+}
+
 void Player_Action_8084411C(Player* this, PlayState* play) {
     f32 sp4C;
     s16 sp4A;
@@ -9999,8 +10014,7 @@ void Player_Action_8084411C(Player* this, PlayState* play) {
             !func_8083BBA0(this, play)) {
             if (this->actor.velocity.y < 0.0f) {
                 if (this->av2.actionVar2 >= 0) {
-                    if ((this->actor.bgCheckFlags & BGCHECKFLAG_WALL) || (this->av2.actionVar2 == 0) ||
-                        (this->fallDistance > 0)) {
+                    if (ShipCrewPlayer_ShouldEnterFallAnimation(this, this->av2.actionVar2 == 0, this->fallDistance)) {
                         if ((sYDistToFloor > 800.0f) || (this->stateFlags1 & PLAYER_STATE1_HOOKSHOT_FALLING)) {
                             func_80843E14(this, NA_SE_VO_LI_FALL_S);
                             this->stateFlags1 &= ~PLAYER_STATE1_HOOKSHOT_FALLING;
