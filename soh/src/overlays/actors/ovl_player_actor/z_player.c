@@ -5955,6 +5955,16 @@ LinkAnimationHeader* ShipCrewPlayer_SelectNativeAutoJump(Player* player, f32* ve
     return anim;
 }
 
+// P1's unchanged collision/velocity gate for an automatic jump. Exposing
+// its floor property and yaw as explicit parameters keeps P2 entirely local.
+s32 ShipCrewPlayer_ShouldNativeAutoJump(Player* player, s32 prevFloorProperty, f32 yDistToFloor, s16 yawDelta) {
+    return (player->actor.bgCheckFlags & BGCHECKFLAG_GROUND_LEAVE) &&
+           !(player->stateFlags1 & PLAYER_STATE1_IN_WATER) &&
+           prevFloorProperty != FLOOR_PROPERTY_6 && prevFloorProperty != FLOOR_PROPERTY_9 &&
+           yDistToFloor > 20.0f && player->meleeWeaponState == 0 &&
+           ABS(yawDelta) < 0x2000 && player->linearVelocity > 3.0f;
+}
+
 s32 func_8083A4A8(Player* this, PlayState* play) {
     f32 speed;
     LinkAnimationHeader* anim = ShipCrewPlayer_SelectNativeAutoJump(this, &speed);
@@ -6099,10 +6109,7 @@ void func_8083AA10(Player* this, PlayState* play) {
 
                 this->floorSfxOffset = this->prevFloorSfxOffset;
 
-                if ((this->actor.bgCheckFlags & BGCHECKFLAG_GROUND_LEAVE) &&
-                    !(this->stateFlags1 & PLAYER_STATE1_IN_WATER) && (sPrevFloorProperty != FLOOR_PROPERTY_6) &&
-                    (sPrevFloorProperty != FLOOR_PROPERTY_9) && (sYDistToFloor > 20.0f) &&
-                    (this->meleeWeaponState == 0) && (ABS(sp5C) < 0x2000) && (this->linearVelocity > 3.0f)) {
+                if (ShipCrewPlayer_ShouldNativeAutoJump(this, sPrevFloorProperty, sYDistToFloor, sp5C)) {
 
                     if ((sPrevFloorProperty == FLOOR_PROPERTY_11) &&
                         !(this->stateFlags1 & PLAYER_STATE1_CARRYING_ACTOR)) {
