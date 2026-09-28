@@ -194,6 +194,8 @@ void Pilot_BeginClimb(Player* player, PlayState* play, s32 type, bool fromHang) 
     // while the visual model was held down with a huge shape.yOffset.
     // Keep both at the real starting anchor and advance through the animation.
     sPilot.climbStart = actor->world.pos;
+    SPDLOG_INFO("[ShipCrew] P2 climb: fromHang={} startY={} targetY={}", fromHang, sPilot.climbStart.y,
+                sPilot.ledgeStand.y);
     actor->prevPos = actor->world.pos;
     actor->velocity.y = 0.0f;
     actor->speedXZ = player->linearVelocity = 0.0f;
@@ -364,6 +366,7 @@ void Pilot_BeginLadder(Player* player, PlayState* play, bool fromTop, const Vec3
                        f32 topY) {
     Actor* actor = &player->actor;
     sPilot.ladder = fromTop ? PilotLadder::EnterTop : PilotLadder::EnterBottom;
+    SPDLOG_INFO("[ShipCrew] P2 ladder attached: fromTop={} bottomY={} topY={}", fromTop, bottomY, topY);
     sPilot.ladderAnchor = anchor;
     sPilot.ladderTopEntry = actor->world.pos;
     sPilot.ladderYaw = yaw;
@@ -512,8 +515,6 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, const OSContPad& pad, b
 
 bool Pilot_TryLadder(Player* player, PlayState* play, const OSContPad& pad, bool enabled, bool canAct, bool moving,
                      bool carryingBomb) {
-    if (sPilot.ladderCooldown > 0)
-        --sPilot.ladderCooldown;
     if (!enabled || !canAct || carryingBomb || !moving || sPilot.ledgeCooldownFrames > 0 || sPilot.ladderCooldown > 0 ||
         sPilot.rollFrames > 0 || sPilot.itemFrames > 0 || sPilot.lockedTarget != nullptr ||
         sPilot.traversal != PilotTraversal::None || sPilot.dodge != PilotDodge::None ||
@@ -934,6 +935,9 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     // rolls while running; there is no manual A-button jump.
     const bool nativeMovement = CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0;
     const bool nativeTraversal = nativeMovement && CVarGetInteger(SHIPCREW_NATIVE_TRAVERSAL_CVAR, 0) != 0;
+    // One cooldown clock even when probing before AND after ground movement.
+    if (sPilot.ladderCooldown > 0)
+        --sPilot.ladderCooldown;
     if (!nativeTraversal &&
         (sPilot.traversal == PilotTraversal::Hanging || sPilot.traversal == PilotTraversal::Climbing ||
          sPilot.traversal == PilotTraversal::HighStepWindup)) {
@@ -979,6 +983,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             else if (forward < -0.35f)
                 dodge = PilotDodge::Backflip;
             if (dodge != PilotDodge::None) {
+                SPDLOG_INFO("[ShipCrew] P2 Z dodge: direction={} hostile={} parallel={}",
+                            static_cast<int>(dodge), sPilot.lockedTarget != nullptr, sPilot.parallelTargeting);
                 sPilot.dodge = dodge;
                 sPilot.dodgeLanding = false;
                 const bool side = dodge != PilotDodge::Backflip;
@@ -1199,8 +1205,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     }
     if (wasGrounded && !(actor->bgCheckFlags & BGCHECKFLAG_GROUND))
         sPilot.takeoffY = actor->world.pos.y;
-    if (!wasGrounded &&
-        Pilot_TryLadder(player, play, pad, nativeTraversal, canAct, moving,
+    if (Pilot_TryLadder(player, play, pad, nativeTraversal, canAct, moving,
                         Pilot_FindHeldBomb(actor, play) != nullptr)) {
         Actor_SetFocus(actor, 40.0f);
         sPilot.lastObservedBombAmmo = AMMO(ITEM_BOMB);
