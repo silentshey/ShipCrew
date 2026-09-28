@@ -10014,8 +10014,7 @@ void Player_Action_8084411C(Player* this, PlayState* play) {
             !func_8083BBA0(this, play)) {
             if (this->actor.velocity.y < 0.0f) {
                 if (this->av2.actionVar2 >= 0) {
-                    if (ShipCrewPlayer_ShouldEnterFallAnimation(this, this->av2.actionVar2 == 0,
-                                                               this->fallDistance)) {
+                    if (ShipCrewPlayer_ShouldEnterFallAnimation(this, this->av2.actionVar2 == 0, this->fallDistance)) {
                         if ((sYDistToFloor > 800.0f) || (this->stateFlags1 & PLAYER_STATE1_HOOKSHOT_FALLING)) {
                             func_80843E14(this, NA_SE_VO_LI_FALL_S);
                             this->stateFlags1 &= ~PLAYER_STATE1_HOOKSHOT_FALLING;
