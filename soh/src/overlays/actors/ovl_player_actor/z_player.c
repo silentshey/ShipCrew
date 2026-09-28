@@ -5476,7 +5476,7 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
         Vec3f start = pos;
         Vec3f end = pos;
         CollisionPoly* wall = NULL;
-        Vec3f hit = {};
+        Vec3f hit = { 0 };
         s32 bgId;
         if (fromTop) {
             // Only consider a ladder if the ground really falls away on
