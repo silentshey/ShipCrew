@@ -92,6 +92,7 @@ struct PilotRuntime {
     int itemDebounceFrames = 0;
     int rollFrames = 0;
     bool nativeRoll = false;
+    int rollRecoveryFrames = 0;
     PilotDodge dodge = PilotDodge::None;
     bool dodgeLanding = false;
     s16 dodgeYaw = 0;
@@ -1011,6 +1012,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         }
         if (dodge == PilotDodge::None) {
             sPilot.nativeRoll = nativeMovement;
+            sPilot.rollRecoveryFrames = 0;
             sPilot.rollInvulnStarted = false;
             sPilot.rollFrames = nativeMovement ? 30 : kRollFrames;
             const f32 magnitude = 80.0f * std::min(inputLength, 1.0f);
@@ -1091,8 +1093,12 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                                                   : 0.0f;
         if (sPilot.dodge != PilotDodge::None) {
             player->yaw = actor->world.rot.y = sPilot.dodgeYaw;
-            if (sPilot.dodgeLanding)
-                Math_StepToF(&player->linearVelocity, 0.0f, REG(43) / 100.0f);
+            if (sPilot.dodgeLanding) {
+                // Landing in P1 returns to the grounded action handler.
+                // Holding P2 at airborne speed until a long landing clip
+                // finished produced the reported stop delay and sliding.
+                Math_StepToF(&player->linearVelocity, 0.0f, moving ? 2.5f : 3.5f);
+            }
             actor->speedXZ = std::max(player->linearVelocity, 0.0f);
         } else if (sPilot.rollFrames > 0) {
             if (sPilot.nativeRoll) {
@@ -1103,6 +1109,17 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                     const f32 rollTarget = std::max(3.0f, ShipCrewPlayer_CalcGroundSpeedTarget(
                                                               stickMagnitude, speedLimit, player->floorPitch, true) *
                                                               1.5f);
+                    // Preserve P1's committed opening roll direction, then
+                    // permit modest analog corrections, not an instant
+                    // reverse or a perpetual camera-facing lock.
+                    if (player->skelAnime.curFrame >= 8.0f && moving) {
+                        const s16 inputYaw =
+                            static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
+                        const s16 delta = static_cast<s16>(inputYaw - sPilot.rollYaw);
+                        if (std::abs(static_cast<s32>(delta)) < 0x3000)
+                            sPilot.rollYaw = static_cast<s16>(
+                                sPilot.rollYaw + std::clamp(static_cast<s32>(delta), -0x380, 0x380));
+                    }
                     ShipCrewPlayer_ApplyNativeRunMotion(player, rollTarget, sPilot.rollYaw);
                 } else {
                     Math_StepToF(&player->linearVelocity, 0.0f, REG(43) / 100.0f);
@@ -1128,6 +1145,17 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                 Math_ScaledStepToS(&player->yaw, desiredYaw, 200);
             }
             actor->speedXZ = std::max(0.0f, player->linearVelocity);
+            actor->world.rot.y = player->yaw;
+        } else if (sPilot.rollRecoveryFrames > 0 &&
+                   (!canAct || !moving ||
+                    std::abs(static_cast<s32>(static_cast<s16>(
+                        static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle) - player->yaw))) > 0x1800)) {
+            // P2 previously carried almost the entire roll velocity into
+            // ordinary walking, where a large yaw change felt like ice.
+            // Apply stronger braking only during the short roll handoff.
+            if (Math_StepToF(&player->linearVelocity, 0.0f, 2.5f) && canAct && moving)
+                player->yaw = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
+            actor->speedXZ = std::max(player->linearVelocity, 0.0f);
             actor->world.rot.y = player->yaw;
         } else if (!canAct || !moving) {
             // Vanilla standing uses the boot-dependent idle deceleration.
@@ -1359,7 +1387,12 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         player->skelAnime.playSpeed = std::clamp(actor->speedXZ / (running ? 5.0f : 2.0f), 0.6f, 2.0f);
     }
     const bool animationFinished = LinkAnimation_Update(play, &player->skelAnime) != 0;
-    if (sPilot.dodge != PilotDodge::None && sPilot.dodgeLanding && animationFinished) {
+    if (sPilot.dodge != PilotDodge::None && sPilot.dodgeLanding &&
+        (animationFinished || (moving && player->skelAnime.curFrame >= 3.0f) ||
+         (!moving && player->skelAnime.curFrame >= 5.0f && player->linearVelocity <= 0.5f))) {
+        // P1 hands control back at touchdown. Give P2 a few frames of
+        // landing animation without forcing the entire clip to play before
+        // the stick can resume grounded locomotion.
         sPilot.dodge = PilotDodge::None;
         sPilot.dodgeLanding = false;
     }
@@ -1370,9 +1403,18 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                 Player_SetInvulnerability(player, -10);
                 sPilot.rollInvulnStarted = true;
             }
+            const s16 inputYaw =
+                static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
+            const bool changedCourse =
+                moving && std::abs(static_cast<s32>(static_cast<s16>(inputYaw - sPilot.rollYaw))) > 0x2800;
+            // P1 can process a new action once its roll is mature. Release
+            // or a deliberate major change of direction recovers at frame
+            // 15 instead of holding P2 rigidly until frame 20.
             if (player->skelAnime.curFrame >= 20.0f ||
+                (player->skelAnime.curFrame >= 15.0f && (!moving || changedCourse)) ||
                 player->skelAnime.animation !=
                     ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_landing_roll)) {
+                sPilot.rollRecoveryFrames = (!moving || changedCourse) ? 5 : 0;
                 sPilot.nativeRoll = false;
                 sPilot.rollFrames = 0;
             }
@@ -1380,6 +1422,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             --sPilot.rollFrames;
         }
     }
+    if (sPilot.rollRecoveryFrames > 0)
+        --sPilot.rollRecoveryFrames;
     if (sPilot.landingFrames > 0) {
         --sPilot.landingFrames;
         if (sPilot.landingFrames == 0)
