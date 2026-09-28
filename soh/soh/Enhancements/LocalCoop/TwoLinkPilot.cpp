@@ -23,6 +23,7 @@ extern "C" {
 extern PlayState* gPlayState;
 void Player_UseItem(PlayState* play, Player* player, s32 item);
 void Player_Draw(Actor* actor, PlayState* play);
+void Player_SetInvulnerability(Player* player, s32 timer);
 LinkAnimationHeader* ShipCrewPlayer_GetGroupAnimation(Player* player, s32 group);
 f32 ShipCrewPlayer_GetRunSpeedLimit(void);
 void ShipCrewPlayer_ApplyNativeRunMotion(Player* player, f32 speedTarget, s16 yawTarget);
