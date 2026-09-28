@@ -899,6 +899,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             // In hold mode, losing a target returns to parallel while held.
             sPilot.lockedTarget = nullptr;
             sPilot.parallelTargeting = holdTargeting;
+            sPilot.parallelFacing = actor->shape.rot.y;
         } else {
             sPilot.parallelTargeting = true;
             sPilot.parallelFacing = actor->shape.rot.y;
@@ -911,12 +912,15 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         if (dx * dx + dz * dz > 1050.0f * 1050.0f) {
             sPilot.lockedTarget = nullptr;
             sPilot.parallelTargeting = holdTargeting && zHeld;
+            sPilot.parallelFacing = actor->shape.rot.y;
         }
     }
     if (sPilot.parallelRecenterFrames > 0)
         --sPilot.parallelRecenterFrames;
     if (!zHeld && sPilot.parallelTargeting && (holdTargeting || sPilot.parallelRecenterFrames == 0))
         sPilot.parallelTargeting = false;
+    if (sPilot.parallelTargeting)
+        player->parallelYaw = sPilot.parallelFacing;
     if (sPilot.lockedTarget != nullptr) {
         player->focusActor = sPilot.lockedTarget;
         player->stateFlags1 |= PLAYER_STATE1_Z_TARGETING;
