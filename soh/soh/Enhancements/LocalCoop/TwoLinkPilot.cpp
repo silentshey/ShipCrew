@@ -115,11 +115,13 @@ struct PilotRuntime {
     PilotLadder ladder = PilotLadder::None;
     int ladderStep = 0;
     int ladderDirection = 0; // Current committed rung: finish before reversing or releasing.
+    bool ladderTopAwaitNeutral = false;
     f32 ladderCycleSpeed = 1.0f;
     f32 ladderLastRootY = 0.0f;
     int ladderCooldown = 0;
     Vec3f ladderAnchor = {};
     Vec3f ladderEntryStart = {};
+    Vec3f ladderEntryGoal = {};
     Vec3f ladderDismountStart = {};
     Vec3f ladderDismountGoal = {};
     Vec3f ladderTopEntry = {};
@@ -362,6 +364,7 @@ bool Pilot_UpdateTraversal(Player* player, PlayState* play, const OSContPad& pad
 void Pilot_ClearLadder(Player* player) {
     sPilot.ladder = PilotLadder::None;
     sPilot.ladderDirection = 0;
+    sPilot.ladderTopAwaitNeutral = false;
     sPilot.ladderCooldown = 16;
     player->stateFlags1 &= ~PLAYER_STATE1_CLIMBING_LADDER;
     player->stateFlags2 &= ~PLAYER_STATE2_STATIONARY_LADDER;
@@ -376,12 +379,17 @@ void Pilot_BeginLadder(Player* player, PlayState* play, bool fromTop, const Vec3
     SPDLOG_INFO("[ShipCrew] P2 ladder attached: fromTop={} bottomY={} topY={}", fromTop, bottomY, topY);
     sPilot.ladderAnchor = anchor;
     sPilot.ladderEntryStart = actor->world.pos;
+    sPilot.ladderEntryGoal = anchor;
+    if (fromTop)
+        sPilot.ladderEntryGoal.y =
+            actor->world.pos.y - std::min(8.0f, std::max(0.0f, (topY - bottomY) * 0.25f));
     sPilot.ladderTopEntry = actor->world.pos;
     sPilot.ladderYaw = yaw;
     sPilot.ladderBottomY = bottomY;
     sPilot.ladderTopY = topY;
     sPilot.ladderStep = 0;
     sPilot.ladderDirection = 0;
+    sPilot.ladderTopAwaitNeutral = fromTop;
     sPilot.ladderCycleSpeed = 1.0f;
     // P1 moves into its attachment animation. Don't warp P2/camera to
     // the ladder before the first animation frame.
@@ -433,19 +441,20 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, f32 worldX, f32 worldZ,
     actor->world.rot.y = actor->shape.rot.y = player->yaw = sPilot.ladderYaw;
     player->stateFlags1 |= PLAYER_STATE1_CLIMBING_LADDER;
     if (sPilot.ladder == PilotLadder::EnterTop || sPilot.ladder == PilotLadder::EnterBottom) {
-        const bool enteringFromTop = sPilot.ladder == PilotLadder::EnterTop;
         const bool finished = LinkAnimation_Update(play, &player->skelAnime) != 0;
         const f32 t =
             finished ? 1.0f
                      : std::clamp(player->skelAnime.curFrame / std::max(1.0f, player->skelAnime.endFrame), 0.0f, 1.0f);
         const f32 progress = t * t * (3.0f - 2.0f * t);
-        actor->world.pos.x = sPilot.ladderEntryStart.x + (sPilot.ladderAnchor.x - sPilot.ladderEntryStart.x) * progress;
-        actor->world.pos.z = sPilot.ladderEntryStart.z + (sPilot.ladderAnchor.z - sPilot.ladderEntryStart.z) * progress;
+        actor->world.pos.x =
+            sPilot.ladderEntryStart.x + (sPilot.ladderEntryGoal.x - sPilot.ladderEntryStart.x) * progress;
+        actor->world.pos.y =
+            sPilot.ladderEntryStart.y + (sPilot.ladderEntryGoal.y - sPilot.ladderEntryStart.y) * progress;
+        actor->world.pos.z =
+            sPilot.ladderEntryStart.z + (sPilot.ladderEntryGoal.z - sPilot.ladderEntryStart.z) * progress;
         if (finished) {
             sPilot.ladder = PilotLadder::Active;
             sPilot.ladderDirection = 0;
-            if (enteringFromTop)
-                actor->world.pos.y -= 2.0f;
         }
     } else if (sPilot.ladder == PilotLadder::DismountTop || sPilot.ladder == PilotLadder::DismountBottom) {
         const bool finished = LinkAnimation_Update(play, &player->skelAnime) != 0;
@@ -461,6 +470,10 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, f32 worldX, f32 worldZ,
             sPilot.ladderDismountStart.z + (sPilot.ladderDismountGoal.z - sPilot.ladderDismountStart.z) * progress;
         if (finished) {
             actor->world.pos = sPilot.ladderDismountGoal;
+            // Reacquire real floor state before ordinary P2 physics resumes:
+            // a synthetic ground bit alone can leave P2 floating or falling
+            // on the next frame after the dismount animation.
+            Actor_UpdateBgCheckInfo(play, actor, 26.0f, 6.0f, player->ageProperties->ceilingCheckHeight, 7);
             actor->bgCheckFlags |= BGCHECKFLAG_GROUND;
             Pilot_ClearLadder(player);
         }
@@ -469,7 +482,16 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, f32 worldX, f32 worldZ,
         // during ladder entry. Project independent WORLD stick movement onto
         // P2's own ladder facing, not raw controller stick_y.
         const f32 along = worldX * Math_SinS(sPilot.ladderYaw) + worldZ * Math_CosS(sPilot.ladderYaw);
-        const int requested = along > 0.29f ? 1 : (along < -0.29f ? -1 : 0);
+        int requested = along > 0.29f ? 1 : (along < -0.29f ? -1 : 0);
+        if (sPilot.ladderTopAwaitNeutral) {
+            // Entering from above can rotate P2's camera while the same
+            // held stick suddenly projects as UP. Require release or
+            // an explicit DOWN input before climbing back out.
+            if (requested <= 0)
+                sPilot.ladderTopAwaitNeutral = false;
+            else
+                requested = 0;
+        }
         if (sPilot.ladderDirection == 0 && requested != 0) {
             // Match P1: alternate age-specific left/right rung assets,
             // selecting the opposite phase when descending.
@@ -551,8 +573,10 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, f32 worldX, f32 worldZ,
                     upperProbe.y += player->ageProperties->unk_40;
                     CollisionPoly* upperFloor = nullptr;
                     const f32 upperY = BgCheck_EntityRaycastFloor1(&play->colCtx, &upperFloor, &upperProbe);
-                    if (upperFloor != nullptr && actor->world.pos.y >= upperY - 10.0f &&
-                        actor->world.pos.y <= upperY + 25.0f && upperY >= sPilot.ladderBottomY + 25.0f) {
+                    if (upperFloor != nullptr &&
+                        actor->world.pos.y >= upperY - std::max(15.0f, 22.0f * player->ageProperties->unk_08) &&
+                        actor->world.pos.y <= upperY + 25.0f &&
+                        upperY >= sPilot.ladderBottomY + 25.0f) {
                         landing = upperProbe;
                         landing.y = upperY;
                         foundTop = true;
@@ -561,7 +585,7 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, f32 worldX, f32 worldZ,
                 }
                 if (foundTop) {
                     Pilot_LadderDismount(player, play, true, landing);
-                } else if (actor->world.pos.y >= sPilot.ladderTopY - 3.0f &&
+                } else if (actor->world.pos.y >= sPilot.ladderTopY - 18.0f &&
                            sPilot.ladderTopEntry.y >= sPilot.ladderTopY - 14.0f) {
                     // Return to the ORIGINAL platform when climbing back out
                     // of the ladder P2 entered from above.
