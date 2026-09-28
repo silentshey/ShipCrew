@@ -2203,6 +2203,23 @@ void Actor_OfferGetItemNearby(Actor* actor, PlayState* play, s32 getItemId) {
     Actor_OfferGetItem(actor, play, getItemId, 50.0f, 10.0f);
 }
 
+Player* ShipCrewPilot_GetInteractionPlayer(PlayState* play);
+// Keep P1's normal actor-relative distance untouched. Props only need to
+// activate collision when EITHER local player is nearby; P2 independently
+// chooses its own pickup candidate using the original prop parent lifecycle.
+f32 ShipCrewActor_GetClosestLocalPlayerXZDist(PlayState* play, Actor* actor) {
+    f32 nearest = actor->xzDistToPlayer;
+    Player* p2 = ShipCrewPilot_GetInteractionPlayer(play);
+    if (p2 != NULL) {
+        const f32 dx = actor->world.pos.x - p2->actor.world.pos.x;
+        const f32 dz = actor->world.pos.z - p2->actor.world.pos.z;
+        const f32 distance = sqrtf(dx * dx + dz * dz);
+        if (distance < nearest)
+            nearest = distance;
+    }
+    return nearest;
+}
+
 void Actor_OfferCarry(Actor* actor, PlayState* play) {
     Actor_OfferGetItemNearby(actor, play, GI_NONE);
 }

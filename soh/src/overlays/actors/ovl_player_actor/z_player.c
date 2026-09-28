@@ -539,6 +539,7 @@ static u32 sTouchedWallFlags = 0;
 // Set only while P2 executes P1's native climb callbacks; scoped globals
 // are immediately restored after P2's action returns.
 static s32 sShipCrewPilotNativeClimb = false;
+static s32 sShipCrewPilotNativeLedge = false;
 static u32 sConveyorSpeed = 0;
 static s16 sIsFloorConveyor = false;
 static s16 sConveyorYaw = 0;
@@ -5378,6 +5379,12 @@ s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* outRise, Vec
 
     Actor* actor = &player->actor;
     PlayerAgeProperties* age = player->ageProperties;
+    // P1's ledge detection runs only after its genuine wall-interaction
+    // collision test succeeds. P2 used to probe arbitrary low rails/fences
+    // from a distance, causing inappropriate auto-mantles.
+    if ((actor->bgCheckFlags & BGCHECKFLAG_GROUND) &&
+        (!(actor->bgCheckFlags & BGCHECKFLAG_WALL) || !(actor->bgCheckFlags & BGCHECKFLAG_PLAYER_WALL_INTERACT)))
+        return PLAYER_LEDGE_CLIMB_NONE;
     if (player->stateFlags1 & (PLAYER_STATE1_CARRYING_ACTOR | PLAYER_STATE1_IN_WATER | PLAYER_STATE1_IN_CUTSCENE)) {
         return PLAYER_LEDGE_CLIMB_NONE;
     }
@@ -8144,7 +8151,10 @@ s32 ShipCrewPlayer_CanLiftContextActor(Actor* actor) {
         case ACTOR_EN_ISHI:
             return !((actor->params & 0xF) == 1 && Player_GetStrength() < PLAYER_STR_SILVER_G);
         case ACTOR_EN_KUSA:
-            return Player_GetStrength() > PLAYER_STR_NONE;
+            // En_Kusa_Main offers normal grass to original P1 regardless of
+            // Strength. The previous pilot-only check incorrectly blocked
+            // P2 grass interactions before the Goron Bracelet.
+            return true;
         case ACTOR_OBJ_TSUBO:
             return true;
         default:
@@ -8209,6 +8219,21 @@ s32 func_8083F524(PlayState* play, Player* this) {
  * back entrance walls. When player interacts with either of these two interior exit walls, start the leaving-crawlspace
  * cutscene and return true. Else, return false
  */
+// Exact P1 interior crawl-exit wall/direction test, exposed for a second
+// Player object. Unlike the original P1 cached sTouchedWallFlags, this uses
+// the wall assigned by THAT player's own collision pass.
+s32 ShipCrewPlayer_ShouldLeaveCrawlspace(PlayState* play, Player* player, f32 speed) {
+    if (play == NULL || player == NULL || speed == 0.0f || !(player->actor.bgCheckFlags & BGCHECKFLAG_WALL) ||
+        player->actor.wallPoly == NULL ||
+        !(SurfaceType_GetWallFlags(&play->colCtx, player->actor.wallPoly, player->actor.wallBgId) &
+          WALL_FLAG_CRAWLSPACE))
+        return false;
+    s16 yawToWall = player->actor.shape.rot.y - player->actor.wallYaw;
+    if (speed < 0.0f)
+        yawToWall += 0x8000;
+    return ABS(yawToWall) > 0x4000;
+}
+
 s32 Player_TryLeavingCrawlspace(Player* this, PlayState* play) {
     s16 yawToWall;
 
@@ -10631,7 +10656,11 @@ void Player_Action_80845668(Player* this, PlayState* play) {
             return;
         }
     } else {
-        temp2 = Player_TryActionInterrupt(play, this, &this->skelAnime, 4.0f);
+        // P2 must run this ORIGINAL ledge action with its own controller.
+        // The vanilla interrupt dispatcher can process global P1 item/UI
+        // state; keep it disabled only for the isolated P2 invocation.
+        temp2 = sShipCrewPilotNativeLedge ? PLAYER_INTERRUPT_NONE
+                                          : Player_TryActionInterrupt(play, this, &this->skelAnime, 4.0f);
 
         if (temp2 == 0) {
             this->stateFlags1 &= ~(PLAYER_STATE1_CLIMBING_LEDGE | PLAYER_STATE1_JUMPING);
@@ -11625,6 +11654,29 @@ s32 Player_UpdateHoverBoots(Player* this) {
  * - Calculate floor poly angles
  *
  */
+// OoT has ONE authoritative PlayState and RoomContext. A second player
+// cannot independently load another scene; instead, allow P2 to request
+// P1's original scene-exit transaction when both local players have reached
+// the same nearby area. Do not hijack P1's camera across the entire map.
+s32 ShipCrewPlayer_TryPilotSharedSceneExit(PlayState* play, Player* p2) {
+    if (play == NULL || p2 == NULL || p2->actor.floorPoly == NULL || p2->actor.floorBgId != BGCHECK_SCENE ||
+        play->transitionTrigger != TRANS_TRIGGER_OFF || !(p2->actor.bgCheckFlags & BGCHECKFLAG_GROUND) ||
+        SurfaceType_GetSceneExitIndex(&play->colCtx, p2->actor.floorPoly, p2->actor.floorBgId) == 0)
+        return false;
+    Player* p1 = GET_PLAYER(play);
+    if (p1 == NULL || p1 == p2 || (p1->stateFlags1 & (PLAYER_STATE1_IN_CUTSCENE | PLAYER_STATE1_LOADING)) ||
+        !(p1->actor.bgCheckFlags & BGCHECKFLAG_GROUND))
+        return false;
+    const f32 dx = p1->actor.world.pos.x - p2->actor.world.pos.x;
+    const f32 dz = p1->actor.world.pos.z - p2->actor.world.pos.z;
+    const f32 dy = p1->actor.world.pos.y - p2->actor.world.pos.y;
+    if (dx * dx + dz * dz > 160.0f * 160.0f || fabsf(dy) > 65.0f)
+        return false;
+    // Use the actual original scene/entrance/rando/void/camera transition
+    // handler, not a second player-owned save or handmade scene reload.
+    return Player_HandleExitsAndVoids(play, p1, p2->actor.floorPoly, p2->actor.floorBgId);
+}
+
 void Player_ProcessSceneCollision(PlayState* play, Player* this) {
     static Vec3f sInteractWallCheckOffset = { 0.0f, 18.0f, 0.0f };
     u8 nextLedgeClimbType = PLAYER_LEDGE_CLIMB_NONE;
@@ -13795,6 +13847,60 @@ void Player_Action_DismountLadder(Player* this, PlayState* play) {
 // Drive P2 through P1's original actionFunc without redirecting GET_PLAYER,
 // camera, save data, or the primary player. Cached input/collision values are
 // restored before P1's next actor update, and only P2's root movement is queued.
+// Share the exact P1 medium ledge setup, including the original vertical
+// draw-offset compensation. The previous P2 controller moved its entire
+// actor through the wall while also playing a root-animated clip, causing
+// fence clipping and a second camera translation at dismount.
+s32 ShipCrewPlayer_BeginNativeLedgeStep(PlayState* play, Player* player, const Vec3f* stand, s16 face, f32 rise,
+                                        s32 ledgeType) {
+    if (play == NULL || player == NULL || player->ageProperties == NULL || stand == NULL ||
+        (ledgeType != PLAYER_LEDGE_CLIMB_2 && ledgeType != PLAYER_LEDGE_CLIMB_3))
+        return false;
+    AnimationContext_SetNextQueue(play);
+    Player_SetupAction(play, player, Player_Action_80845668, 0);
+    player->stateFlags1 &= ~PLAYER_STATE1_HANGING_OFF_LEDGE;
+    player->stateFlags1 |= PLAYER_STATE1_CLIMBING_LEDGE | PLAYER_STATE1_JUMPING;
+    player->actor.world.rot.y = player->actor.shape.rot.y = player->yaw = face;
+    player->actor.velocity.y = player->linearVelocity = player->actor.speedXZ = 0.0f;
+    player->actor.gravity = 0.0f;
+    player->yDistToLedge = rise;
+    // These are Player_ActionHandler_12's original physical placement and
+    // shape offset, including the age-scaled 100/150-step compensation.
+    const f32 animRise = ledgeType == PLAYER_LEDGE_CLIMB_3 ? 59.0f : 41.0f;
+    player->actor.shape.yOffset -= (rise - animRise * player->ageProperties->unk_08) * 100.0f;
+    player->actor.world.pos = *stand;
+    func_80832224(player);
+    player->actor.prevPos = player->actor.world.pos;
+    player->actor.bgCheckFlags |= BGCHECKFLAG_GROUND;
+    LinkAnimationHeader* anim =
+        ledgeType == PLAYER_LEDGE_CLIMB_3 ? &gPlayerAnim_link_normal_150step_up : &gPlayerAnim_link_normal_100step_up;
+    LinkAnimation_PlayOnceSetSpeed(play, &player->skelAnime, anim, 1.3f);
+    AnimationContext_DisableQueue(play);
+    AnimationContext_SetNextQueue(play);
+    return true;
+}
+
+s32 ShipCrewPlayer_TickNativeLedgeForPilot(PlayState* play, Player* player, Input* input) {
+    if (play == NULL || player == NULL || input == NULL || player->actionFunc != Player_Action_80845668)
+        return false;
+    Input* oldInput = sControlInput;
+    const s32 oldPilot = sShipCrewPilotNativeLedge;
+    AnimationContext_SetNextQueue(play);
+    sControlInput = input;
+    sShipCrewPilotNativeLedge = true;
+    player->actionFunc(player, play);
+    sShipCrewPilotNativeLedge = oldPilot;
+    sControlInput = oldInput;
+    ShipCrewPlayer_QueueNativeAnimMovement(play, player);
+    AnimationContext_SetNextQueue(play);
+    return player->actionFunc == Player_Action_80845668;
+}
+
+void ShipCrewPlayer_CancelNativeLedgeForPilot(PlayState* play, Player* player) {
+    if (play != NULL && player != NULL && player->actionFunc == Player_Action_80845668)
+        func_8083C0E8(player, play);
+}
+
 s32 ShipCrewPlayer_IsNativeClimbAction(Player* player) {
     if (player == NULL)
         return false;

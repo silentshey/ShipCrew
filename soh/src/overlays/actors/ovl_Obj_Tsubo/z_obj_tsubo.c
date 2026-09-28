@@ -241,6 +241,8 @@ void ObjTsubo_SetupIdle(ObjTsubo* this) {
 }
 
 void ObjTsubo_Idle(ObjTsubo* this, PlayState* play) {
+    extern f32 ShipCrewActor_GetClosestLocalPlayerXZDist(PlayState * play, Actor * actor);
+    const f32 nearestLocalPlayer = ShipCrewActor_GetClosestLocalPlayerXZDist(play, &this->actor);
     s32 pad;
     s16 temp_v0;
     s32 phi_v1;
@@ -259,15 +261,15 @@ void ObjTsubo_Idle(ObjTsubo* this, PlayState* play) {
         SoundSource_PlaySfxAtFixedWorldPos(play, &this->actor.world.pos, 20, NA_SE_EV_POT_BROKEN);
         Actor_Kill(&this->actor);
     } else {
-        if (this->actor.xzDistToPlayer < 600.0f) {
+        if (nearestLocalPlayer < 600.0f) {
             Collider_UpdateCylinder(&this->actor, &this->collider);
             this->collider.base.acFlags &= ~AC_HIT;
             CollisionCheck_SetAC(play, &play->colChkCtx, &this->collider.base);
-            if (this->actor.xzDistToPlayer < 150.0f) {
+            if (nearestLocalPlayer < 150.0f) {
                 CollisionCheck_SetOC(play, &play->colChkCtx, &this->collider.base);
             }
         }
-        if (this->actor.xzDistToPlayer < 100.0f) {
+        if (nearestLocalPlayer < 100.0f) {
             temp_v0 = this->actor.yawTowardsPlayer - GET_PLAYER(play)->actor.world.rot.y;
             phi_v1 = ABS(temp_v0);
             if (phi_v1 >= 0x5556) {

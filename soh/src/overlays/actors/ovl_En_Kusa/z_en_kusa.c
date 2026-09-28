@@ -308,6 +308,8 @@ void EnKusa_SetupMain(EnKusa* this) {
 }
 
 void EnKusa_Main(EnKusa* this, PlayState* play) {
+    extern f32 ShipCrewActor_GetClosestLocalPlayerXZDist(PlayState * play, Actor * actor);
+    const f32 nearestLocalPlayer = ShipCrewActor_GetClosestLocalPlayerXZDist(play, &this->actor);
     s32 pad;
 
     if (Actor_HasParent(&this->actor, play)) {
@@ -332,17 +334,17 @@ void EnKusa_Main(EnKusa* this, PlayState* play) {
         EnKusa_SetupCut(this);
         this->actor.flags |= ACTOR_FLAG_GRASS_DESTROYED;
     } else {
-        if (!(this->collider.base.ocFlags1 & OC1_TYPE_PLAYER) && (this->actor.xzDistToPlayer > 12.0f)) {
+        if (!(this->collider.base.ocFlags1 & OC1_TYPE_PLAYER) && (nearestLocalPlayer > 12.0f)) {
             this->collider.base.ocFlags1 |= OC1_TYPE_PLAYER;
         }
 
-        if (this->actor.xzDistToPlayer < 600.0f) {
+        if (nearestLocalPlayer < 600.0f) {
             Collider_UpdateCylinder(&this->actor, &this->collider);
             CollisionCheck_SetAC(play, &play->colChkCtx, &this->collider.base);
 
-            if (this->actor.xzDistToPlayer < 400.0f) {
+            if (nearestLocalPlayer < 400.0f) {
                 CollisionCheck_SetOC(play, &play->colChkCtx, &this->collider.base);
-                if (this->actor.xzDistToPlayer < 100.0f) {
+                if (nearestLocalPlayer < 100.0f) {
                     Actor_OfferCarry(&this->actor, play);
                 }
             }
