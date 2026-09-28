@@ -1100,6 +1100,9 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             player->stateFlags1 &= ~PLAYER_STATE1_PARALLEL;
     }
 
+    const bool nativeMovement = CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0;
+    const bool nativeTraversal = nativeMovement && CVarGetInteger(SHIPCREW_NATIVE_TRAVERSAL_CVAR, 0) != 0;
+
     // First sword/shield integration follows P1's existing saved B sword
     // and equipped shield. Item acquisition and ammunition stay shared;
     // these actions only change P2's own model and native action state.
