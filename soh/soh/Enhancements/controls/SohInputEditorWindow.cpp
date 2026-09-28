@@ -1667,6 +1667,16 @@ void SohInputEditorWindow::DrawLinkTab() {
                                   "per-player action-state isolation.\\n"
                                   "Disable to retain the previous tested P2 movement. Use a test save."));
 
+        CVarCheckbox("ShipCrew: Native P2 Sword + Shield (Experimental)",
+                     CVAR_SETTING("ShipCrew.P2NativeCombat"),
+                     CheckboxOptions()
+                         .Color(THEME_COLOR)
+                         .Tooltip("Requires Native-Style P2 Movement. Uses Player 1's original sword action code, "
+                                  "weapon models, damage quads/trail and shield model/collider with controller 2.\n"
+                                  "B: sword attack using the shared save's equipped B-button sword. "
+                                  "R: raise the shared save's equipped shield.\n"
+                                  "This is an opt-in combat test; keep disabled while validating crawl/ledge fixes."));
+
         CVarCheckbox("ShipCrew: P2 Automatic Jump + Ledge Traversal (Experimental)",
                      CVAR_SETTING("ShipCrew.P2NativeTraversal"),
                      CheckboxOptions()
