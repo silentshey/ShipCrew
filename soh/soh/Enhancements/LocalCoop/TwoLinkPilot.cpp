@@ -289,6 +289,106 @@ bool Pilot_UpdateTraversal(Player* player, PlayState* play, const OSContPad& pad
     return true;
 }
 
+// A separate P2 traversal transition layer sits on top of the tested P2
+// movement/physics. It uses the shared native wall geometry QUERY but owns
+// its own probe timer, jump phase, animation and player actor state.
+bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool canAct, bool moving, bool enabled,
+                        bool carryingBomb) {
+    Actor* actor = &player->actor;
+    if (sPilot.ledgeCooldownFrames > 0)
+        --sPilot.ledgeCooldownFrames;
+    if (!enabled || !canAct || carryingBomb || player->ageProperties == nullptr) {
+        sPilot.ledgeProbeFrames = 0;
+        sPilot.ledgeProbeType = 0;
+        return false;
+    }
+
+    const bool grounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
+    const bool falling = actor->velocity.y < 0.0f;
+    // Player 1's autojump starts on BGCHECKFLAG_GROUND_LEAVE for a real drop,
+    // with forward momentum and an unobstructed facing direction. Never
+    // assign a manual jump button to P2.
+    if (wasGrounded && !grounded && (actor->bgCheckFlags & BGCHECKFLAG_GROUND_LEAVE) &&
+        sPilot.traversal != PilotTraversal::AutoJump && actor->speedXZ > 3.0f &&
+        std::abs(static_cast<s32>(static_cast<s16>(actor->world.rot.y - actor->shape.rot.y))) < 0x2000 &&
+        actor->world.pos.y - actor->floorHeight > 20.0f) {
+        f32 jumpSpeed;
+        if (player->linearVelocity > IREG(66) / 100.0f) {
+            jumpSpeed = IREG(67) / 100.0f;
+        } else {
+            jumpSpeed = IREG(68) / 100.0f + IREG(69) * player->linearVelocity / 1000.0f;
+        }
+        Pilot_BeginJump(player, std::max(4.0f, jumpSpeed));
+        return false;
+    }
+
+    if (sPilot.ledgeCooldownFrames > 0 || sPilot.rollFrames > 0 || sPilot.itemFrames > 0)
+        return false;
+
+    // The original player probes at head height using the current forward
+    // yaw; probe while advancing against a wall, or when descending toward
+    // a reachable edge. Do not snap P2 to arbitrary scenery when idle.
+    const bool descendingTowardWall =
+        !grounded && falling && sPilot.traversal == PilotTraversal::AutoJump && actor->speedXZ > 0.3f;
+    if ((!grounded && !descendingTowardWall) || (grounded && (!moving || actor->speedXZ < 0.3f)) ||
+        sPilot.lockedTarget != nullptr) {
+        sPilot.ledgeProbeFrames = 0;
+        return false;
+    }
+
+    f32 rise = 0.0f;
+    Vec3f stand = {};
+    s16 facing = 0;
+    const s32 type = ShipCrewPlayer_QueryLedge(play, player, &rise, &stand, &facing);
+    if (type == PLAYER_LEDGE_CLIMB_NONE) {
+        sPilot.ledgeProbeFrames = 0;
+        sPilot.ledgeProbeType = 0;
+        return false;
+    }
+
+    if (descendingTowardWall && type >= PLAYER_LEDGE_CLIMB_2 &&
+        ((actor->world.pos.y - actor->floorHeight) + rise) > 70.0f * player->ageProperties->unk_08) {
+        Pilot_BeginHang(player, play, rise, stand, facing);
+        return true;
+    }
+
+    if (!grounded)
+        return false;
+
+    if (sPilot.ledgeProbeType == type) {
+        sPilot.ledgeProbeFrames = std::min(sPilot.ledgeProbeFrames + 1, 100);
+    } else {
+        sPilot.ledgeProbeType = type;
+        sPilot.ledgeProbeFrames = 1;
+    }
+
+    if (type == PLAYER_LEDGE_CLIMB_1 && sPilot.ledgeProbeFrames >= 3) {
+        Pilot_BeginJump(player, rise * 0.08f + 5.5f);
+        actor->speedXZ = player->linearVelocity = 2.5f;
+        actor->world.rot.y = player->yaw = facing;
+        return false;
+    }
+    if (sPilot.ledgeProbeFrames < 6)
+        return false;
+
+    sPilot.ledgeStand = stand;
+    sPilot.ledgeRise = rise;
+    sPilot.ledgeFacing = facing;
+    sPilot.ledgeProbeFrames = 0;
+    if (type == PLAYER_LEDGE_CLIMB_4) {
+        sPilot.traversal = PilotTraversal::HighStepWindup;
+        actor->speedXZ = player->linearVelocity = actor->velocity.y = 0.0f;
+        actor->gravity = 0.0f;
+        actor->world.rot.y = actor->shape.rot.y = player->yaw = facing;
+        LinkAnimationHeader* anim = Pilot_Animation(gPlayerAnim_link_normal_250jump_start);
+        LinkAnimation_Change(play, &player->skelAnime, anim, 1.0f, 0.0f, Animation_GetLastFrame(anim),
+                             ANIMMODE_ONCE, -3.0f);
+    } else {
+        Pilot_BeginClimb(player, play, type, false);
+    }
+    return true;
+}
+
 // P1 calls Inventory_ChangeAmmo(item, -1), which caps the *result* to the
 // save's upgrade capacity. If a test/edited/shared save has ammunition but no
 // matching Bomb Bag/Nut upgrade (capacity 0), even one normal decrement
@@ -580,6 +680,18 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     // The original action button releases a carried bomb first. Otherwise A
     // rolls while running; there is no manual A-button jump.
     const bool nativeMovement = CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0;
+    const bool nativeTraversal = nativeMovement && CVarGetInteger(SHIPCREW_NATIVE_TRAVERSAL_CVAR, 0) != 0;
+    if (!nativeTraversal && (sPilot.traversal == PilotTraversal::Hanging ||
+                             sPilot.traversal == PilotTraversal::Climbing ||
+                             sPilot.traversal == PilotTraversal::HighStepWindup)) {
+        Pilot_ClearTraversal(actor, player);
+    }
+    if (nativeTraversal && Pilot_UpdateTraversal(player, play, pad, pressed, canAct)) {
+        player->currentTunic = GET_PLAYER(play)->currentTunic;
+        player->currentBoots = GET_PLAYER(play)->currentBoots;
+        player->currentShield = GET_PLAYER(play)->currentShield;
+        return;
+    }
     if (nativeMovement && !sPilot.nativeMovementPreviouslyEnabled) {
         player->linearVelocity = actor->speedXZ;
         player->yaw = actor->world.rot.y;
@@ -696,13 +808,23 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     } else {
         Actor_UpdateBgCheckInfo(play, actor, kWallCheckHeight, kWallCheckRadius, kCeilingCheckHeight, 0x1D);
     }
+    if (Pilot_TryTraversal(player, play, wasGrounded, canAct, moving, nativeTraversal,
+                           Pilot_FindHeldBomb(actor, play) != nullptr)) {
+        Actor_SetFocus(actor, 40.0f);
+        sPilot.lastObservedBombAmmo = AMMO(ITEM_BOMB);
+        sPilot.lastObservedNutAmmo = AMMO(ITEM_NUT);
+        return;
+    }
     Actor_SetFocus(actor, 40.0f);
     if (CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) == 0) {
         sPilot.cameraReady = false;
     }
     const bool grounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
     if (!wasGrounded && grounded && fallingBeforeMove) {
-        sPilot.landingFrames = kLandingFrames;
+        const f32 fallDistance = sPilot.takeoffY - actor->world.pos.y;
+        sPilot.landingFrames = nativeTraversal && fallDistance > 80.0f ? kLandingFrames * 2 : kLandingFrames;
+        if (sPilot.traversal == PilotTraversal::AutoJump)
+            Pilot_ClearTraversal(actor, player);
     }
 
     // Keep the live bomb attached to P2's position until A releases it.
@@ -740,8 +862,15 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                                    : Pilot_Animation(gPlayerAnim_link_normal_landing_roll_free);
         mode = ANIMMODE_ONCE;
     } else if (!grounded) {
-        animation = nativeMovement && actor->speedXZ > 4.0f ? Pilot_Animation(gPlayerAnim_link_normal_run_jump)
-                                                            : Pilot_Animation(gPlayerAnim_link_normal_jump);
+        // Native jump startup retains forward momentum; after the apex use
+        // the original falling-loop pose, rather than restarting jump every
+        // frame. No manual A-button jump is introduced.
+        if (nativeTraversal && actor->velocity.y < 0.0f) {
+            animation = Pilot_Animation(gPlayerAnim_link_normal_landing_wait);
+        } else {
+            animation = nativeMovement && actor->speedXZ > 4.0f ? Pilot_Animation(gPlayerAnim_link_normal_run_jump)
+                                                                : Pilot_Animation(gPlayerAnim_link_normal_jump);
+        }
         sPilot.landingFrames = 0;
     } else if (sPilot.itemFrames > 0) {
         switch (sPilot.itemPose) {
@@ -760,8 +889,11 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         animation = Pilot_Animation(moving ? gPlayerAnim_link_normal_carryB : gPlayerAnim_link_normal_carryB_wait);
         locomotionLoop = moving;
     } else if (sPilot.landingFrames > 0) {
-        animation = nativeMovement ? ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_short_landing)
-                                   : Pilot_Animation(gPlayerAnim_link_normal_short_landing_free);
+        const bool longFall = nativeTraversal && sPilot.landingFrames > kLandingFrames;
+        animation = nativeMovement
+                        ? ShipCrewPlayer_GetGroupAnimation(
+                              player, longFall ? PLAYER_ANIMGROUP_landing : PLAYER_ANIMGROUP_short_landing)
+                        : Pilot_Animation(gPlayerAnim_link_normal_short_landing_free);
         mode = ANIMMODE_ONCE;
     } else if (nativeMovement) {
         if (!moving || actor->speedXZ < 0.15f) {
