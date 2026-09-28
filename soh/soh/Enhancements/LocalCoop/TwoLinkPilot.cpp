@@ -329,8 +329,7 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
     // yaw; probe while advancing against a wall, or when descending toward
     // a reachable edge. Do not snap P2 to arbitrary scenery when idle.
     const bool descendingTowardWall =
-        !grounded && falling && (sPilot.traversal == PilotTraversal::AutoJump || !wasGrounded) &&
-        actor->speedXZ > 0.3f;
+        !grounded && falling && (sPilot.traversal == PilotTraversal::AutoJump || !wasGrounded) && actor->speedXZ > 0.3f;
     // Native collision slows horizontal speed nearly to zero against a wall,
     // so use the stick rather than speedXZ for grounded climb intent.
     if ((!grounded && !descendingTowardWall) || (grounded && !moving) || sPilot.lockedTarget != nullptr) {
