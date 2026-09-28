@@ -7962,6 +7962,8 @@ void ShipCrewPlayer_BeginNativeClimb(PlayState* play, Player* player, const Vec3
 
     // Pilot items are validated independently before starting this action.
     // Avoid P1's global item/camera/cutscene put-away mechanism here.
+    Input* previousInput = sControlInput;
+    sControlInput = &play->state.input[1];
     Player_SetupAction(play, player, Player_Action_8084BF1C, 0);
     player->stateFlags1 |= PLAYER_STATE1_CLIMBING_LADDER;
     player->stateFlags1 &= ~PLAYER_STATE1_IN_WATER;
@@ -7982,6 +7984,7 @@ void ShipCrewPlayer_BeginNativeClimb(PlayState* play, Player* player, const Vec3
                                     : (fromTop ? player->ageProperties->unk_A8 : player->ageProperties->unk_A4);
     Player_AnimPlayOnce(play, player, anim);
     Player_StartAnimMovement(play, player, 0x9F);
+    sControlInput = previousInput;
 }
 
 void Player_SetupDismountLadder(Player* this, LinkAnimationHeader* anim, PlayState* play) {
@@ -13777,6 +13780,11 @@ s32 ShipCrewPlayer_IsNativeClimbAction(Player* player) {
            player->actionFunc == Player_Action_8084BBE4;
 }
 
+void ShipCrewPlayer_CancelNativeClimbForPilot(PlayState* play, Player* player) {
+    if (play != NULL && ShipCrewPlayer_IsNativeClimbAction(player))
+        func_8083C0E8(player, play);
+}
+
 s32 ShipCrewPlayer_UpdateNativeClimbForPilot(PlayState* play, Player* player, Input* input) {
     if (play == NULL || player == NULL || input == NULL || !ShipCrewPlayer_IsNativeClimbAction(player))
         return false;
@@ -13793,6 +13801,9 @@ s32 ShipCrewPlayer_UpdateNativeClimbForPilot(PlayState* play, Player* player, In
                                                        player->actor.wallBgId);
     sYDistToFloor = player->actor.world.pos.y - player->actor.floorHeight;
     sShipCrewPilotNativeClimb = true;
+    // Vanilla clears transient per-action flags immediately before the native
+    // action; P2 does not execute the full primary Player_UpdateCommon.
+    player->stateFlags2 &= ~(PLAYER_STATE2_STATIONARY_LADDER | PLAYER_STATE2_DISABLE_ROTATION_ALWAYS);
     player->actionFunc(player, play);
 
     sShipCrewPilotNativeClimb = previousPilotClimb;
