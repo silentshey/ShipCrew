@@ -4039,7 +4039,8 @@ s32 Player_CalcSpeedAndYawFromControlStick(PlayState* play, Player* this, f32* o
         return false;
     }
     *outYawTarget = sControlStickAngle;
-    *outSpeedTarget = ShipCrewPlayer_CalcNativeAnalogSpeed(this, sControlStickMagnitude, speedMode != SPEED_MODE_LINEAR);
+    *outSpeedTarget =
+        ShipCrewPlayer_CalcNativeAnalogSpeed(this, sControlStickMagnitude, speedMode != SPEED_MODE_LINEAR);
     return sControlStickMagnitude != 0.0f;
 }
 /**
@@ -5945,8 +5946,8 @@ void func_8083A434(PlayState* play, Player* this) {
 LinkAnimationHeader* ShipCrewPlayer_SelectNativeAutoJump(Player* player, f32* verticalSpeed) {
     const s16 yawDiff = player->yaw - player->actor.shape.rot.y;
     LinkAnimationHeader* anim = (ABS(yawDiff) < 0x1000 && player->linearVelocity > 4.0f)
-                                   ? &gPlayerAnim_link_normal_run_jump
-                                   : &gPlayerAnim_link_normal_jump;
+                                    ? &gPlayerAnim_link_normal_run_jump
+                                    : &gPlayerAnim_link_normal_jump;
     if (player->linearVelocity > IREG(66) / 100.0f)
         *verticalSpeed = IREG(67) / 100.0f;
     else
@@ -6634,8 +6635,7 @@ f32 ShipCrewPlayer_NativeDodgeHorizontalSpeed(s32 direction) {
 
 void func_8083BCD0(Player* this, PlayState* play, s32 controlStickDirection) {
     func_80838940(this, ShipCrewPlayer_SelectNativeDodge(controlStickDirection, false),
-                   ShipCrewPlayer_NativeDodgeVerticalSpeed(controlStickDirection), play,
-                  NA_SE_VO_LI_SWORD_N);
+                  ShipCrewPlayer_NativeDodgeVerticalSpeed(controlStickDirection), play, NA_SE_VO_LI_SWORD_N);
 
     if (controlStickDirection) {}
 
