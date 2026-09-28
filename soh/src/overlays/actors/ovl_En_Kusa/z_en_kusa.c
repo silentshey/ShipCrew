@@ -308,7 +308,7 @@ void EnKusa_SetupMain(EnKusa* this) {
 }
 
 void EnKusa_Main(EnKusa* this, PlayState* play) {
-    extern f32 ShipCrewActor_GetClosestLocalPlayerXZDist(PlayState* play, Actor* actor);
+    extern f32 ShipCrewActor_GetClosestLocalPlayerXZDist(PlayState * play, Actor * actor);
     const f32 nearestLocalPlayer = ShipCrewActor_GetClosestLocalPlayerXZDist(play, &this->actor);
     s32 pad;
 

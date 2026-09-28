@@ -241,7 +241,7 @@ void ObjTsubo_SetupIdle(ObjTsubo* this) {
 }
 
 void ObjTsubo_Idle(ObjTsubo* this, PlayState* play) {
-    extern f32 ShipCrewActor_GetClosestLocalPlayerXZDist(PlayState* play, Actor* actor);
+    extern f32 ShipCrewActor_GetClosestLocalPlayerXZDist(PlayState * play, Actor * actor);
     const f32 nearestLocalPlayer = ShipCrewActor_GetClosestLocalPlayerXZDist(play, &this->actor);
     s32 pad;
     s16 temp_v0;
