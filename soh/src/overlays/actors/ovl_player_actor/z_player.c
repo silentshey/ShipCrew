@@ -5378,8 +5378,7 @@ s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* outRise, Vec
     CollisionPoly* wallPoly = NULL;
     Vec3f hit;
     s32 wallBgId;
-    if (!BgCheck_EntityLineTest1(&play->colCtx, &start, &end, &hit, &wallPoly, true, false, false, true,
-                                 &wallBgId) ||
+    if (!BgCheck_EntityLineTest1(&play->colCtx, &start, &end, &hit, &wallPoly, true, false, false, true, &wallBgId) ||
         wallPoly == NULL || !GameInteractor_Should(VB_SURFACE_ANGLE_IS_CLIMBABLE, ABS(wallPoly->normal.y) < 600) ||
         func_80041DE4(&play->colCtx, wallPoly, wallBgId) != 0) {
         return PLAYER_LEDGE_CLIMB_NONE;
@@ -5405,8 +5404,7 @@ s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* outRise, Vec
     CollisionPoly* ledgeFloor = NULL;
     const f32 ledgeY = BgCheck_EntityRaycastFloor1(&play->colCtx, &ledgeFloor, &ledgePos);
     const f32 rise = ledgeY - actor->world.pos.y;
-    if (ledgeFloor == NULL || ABS(ledgeFloor->normal.y) <= 28000 || rise < 18.0f ||
-        rise > age->unk_0C + 1.0f) {
+    if (ledgeFloor == NULL || ABS(ledgeFloor->normal.y) <= 28000 || rise < 18.0f || rise > age->unk_0C + 1.0f) {
         return PLAYER_LEDGE_CLIMB_NONE;
     }
 
@@ -5429,9 +5427,10 @@ s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* outRise, Vec
     Vec3f highHit;
     s32 highBgId;
     if (BgCheck_EntityLineTest1(&play->colCtx, &highStart, &highEnd, &highHit, &highWall, true, false, false, true,
-                                 &highBgId) &&
-        highWall != NULL && ABS((s16)(Math_Atan2S(highWall->normal.z, highWall->normal.x) -
-                                     Math_Atan2S(wallPoly->normal.z, wallPoly->normal.x))) < 0x4000 &&
+                                &highBgId) &&
+        highWall != NULL &&
+        ABS((s16)(Math_Atan2S(highWall->normal.z, highWall->normal.x) -
+                  Math_Atan2S(wallPoly->normal.z, wallPoly->normal.x))) < 0x4000 &&
         !func_80041E18(&play->colCtx, highWall, highBgId)) {
         return PLAYER_LEDGE_CLIMB_NONE;
     }
