@@ -6594,11 +6594,17 @@ s32 func_8083BBA0(Player* this, PlayState* play) {
     return 0;
 }
 
+// Same native roll pose and animation timing for either player, with
+// water speed passed explicitly so P2 does not borrow P1's global state.
+void ShipCrewPlayer_StartNativeRollClip(PlayState* play, Player* player, f32 waterSpeedFactor) {
+    LinkAnimation_PlayOnceSetSpeed(play, &player->skelAnime,
+                                   GET_PLAYER_ANIM(PLAYER_ANIMGROUP_landing_roll, player->modelAnimType),
+                                   1.25f * waterSpeedFactor);
+}
+
 void Player_SetupRoll(Player* this, PlayState* play) {
     Player_SetupAction(play, this, Player_Action_Roll, 0);
-    LinkAnimation_PlayOnceSetSpeed(play, &this->skelAnime,
-                                   GET_PLAYER_ANIM(PLAYER_ANIMGROUP_landing_roll, this->modelAnimType),
-                                   1.25f * sWaterSpeedFactor);
+    ShipCrewPlayer_StartNativeRollClip(play, this, sWaterSpeedFactor);
     gSaveContext.ship.stats.count[COUNT_ROLLS]++;
 }
 
@@ -6612,8 +6618,23 @@ s32 Player_TryRoll(Player* this, PlayState* play) {
     return false;
 }
 
+// The original action table and jump velocities, shared without invoking
+// P1's global action/input machine for P2.
+LinkAnimationHeader* ShipCrewPlayer_SelectNativeDodge(s32 direction, s32 landing) {
+    return D_80853D4C[direction][landing ? 2 : 0];
+}
+
+f32 ShipCrewPlayer_NativeDodgeVerticalSpeed(s32 direction) {
+    return (direction & 1) ? 3.5f : 5.8f;
+}
+
+f32 ShipCrewPlayer_NativeDodgeHorizontalSpeed(s32 direction) {
+    return (direction & 1) ? 8.5f : 6.0f;
+}
+
 void func_8083BCD0(Player* this, PlayState* play, s32 controlStickDirection) {
-    func_80838940(this, D_80853D4C[controlStickDirection][0], !(controlStickDirection & 1) ? 5.8f : 3.5f, play,
+    func_80838940(this, ShipCrewPlayer_SelectNativeDodge(controlStickDirection, false),
+                   ShipCrewPlayer_NativeDodgeVerticalSpeed(controlStickDirection), play,
                   NA_SE_VO_LI_SWORD_N);
 
     if (controlStickDirection) {}
@@ -6622,7 +6643,7 @@ void func_8083BCD0(Player* this, PlayState* play, s32 controlStickDirection) {
     this->av1.actionVar1 = controlStickDirection;
 
     this->yaw = this->actor.shape.rot.y + (controlStickDirection << 0xE);
-    this->linearVelocity = !(controlStickDirection & 1) ? 6.0f : 8.5f;
+    this->linearVelocity = ShipCrewPlayer_NativeDodgeHorizontalSpeed(controlStickDirection);
 
     this->stateFlags2 |= PLAYER_STATE2_HOPPING;
 
