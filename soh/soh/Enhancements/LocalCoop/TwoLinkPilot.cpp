@@ -85,6 +85,8 @@ struct PilotRuntime {
     u32 previousButtons = 0;
     int itemDebounceFrames = 0;
     int rollFrames = 0;
+    bool nativeRoll = false;
+    bool rollInvulnStarted = false;
     f32 rollSpeed = 0.0f;
     s16 rollYaw = 0;
     bool nativeMovementPreviouslyEnabled = false;
@@ -707,8 +709,9 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         heldBomb = nullptr;
     } else if (canAct && (pressed & BTN_A) && heldBomb == nullptr && wasGrounded && moving && sPilot.rollFrames == 0 &&
                sPilot.itemFrames == 0) {
-        sPilot.rollFrames = nativeMovement ? kNativeRollFrames : kRollFrames;
-        // Native Link rolls at 1.5 times the curved stick speed, minimum 3.
+        sPilot.nativeRoll = nativeMovement;
+        sPilot.rollInvulnStarted = false;
+        sPilot.rollFrames = nativeMovement ? 30 : kRollFrames;
         const f32 magnitude = 80.0f * std::min(inputLength, 1.0f);
         const f32 speedCap = ShipCrewPlayer_GetRunSpeedLimit();
         sPilot.rollSpeed =
@@ -718,6 +721,14 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                 : kRollSpeed;
         sPilot.rollYaw = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
         sPilot.landingFrames = 0;
+        if (nativeMovement) {
+            // P1's roll starts at 1.25x playback and lasts through the
+            // animation's actual frame 20, not a hard-coded 20 physics ticks.
+            LinkAnimationHeader* roll =
+                ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_landing_roll);
+            LinkAnimation_PlayOnceSetSpeed(play, &player->skelAnime, roll, 1.25f);
+            gSaveContext.ship.stats.count[COUNT_ROLLS]++;
+        }
     }
 
     // Two independent yaws are essential for native Z movement: world/yaw
@@ -772,10 +783,24 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                                                                     !hostileLock && !sPilot.parallelTargeting)
                              : 0.0f;
         if (sPilot.rollFrames > 0) {
-            actor->speedXZ = sPilot.rollSpeed;
-            actor->world.rot.y = sPilot.rollYaw;
-            player->linearVelocity = sPilot.rollSpeed;
-            player->yaw = sPilot.rollYaw;
+            if (sPilot.nativeRoll) {
+                // Mirror P1 Player_Action_Roll's per-frame speed calculation:
+                // curved stick speed * 1.5, minimum 3, original run step,
+                // and movement fixed to Link's roll-facing yaw.
+                if (player->skelAnime.curFrame < 20.0f) {
+                    const f32 rollTarget =
+                        std::max(3.0f, ShipCrewPlayer_CalcGroundSpeedTarget(
+                                           stickMagnitude, speedLimit, player->floorPitch, true) *
+                                           1.5f);
+                    ShipCrewPlayer_ApplyNativeRunMotion(player, rollTarget, sPilot.rollYaw);
+                } else {
+                    Math_StepToF(&player->linearVelocity, 0.0f, REG(43) / 100.0f);
+                }
+                actor->speedXZ = std::max(player->linearVelocity, 0.0f);
+                actor->world.rot.y = player->yaw;
+            } else {
+                actor->speedXZ = kRollSpeed;
+            }
         } else if (!canAct || !moving) {
             // Vanilla standing uses the boot-dependent idle deceleration.
             Math_StepToF(&player->linearVelocity, 0.0f, REG(43) / 100.0f);
@@ -1001,7 +1026,19 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     LinkAnimation_Update(play, &player->skelAnime);
 
     if (sPilot.rollFrames > 0) {
-        --sPilot.rollFrames;
+        if (sPilot.nativeRoll) {
+            if (!sPilot.rollInvulnStarted && player->skelAnime.curFrame >= 8.0f) {
+                Player_SetInvulnerability(player, -10);
+                sPilot.rollInvulnStarted = true;
+            }
+            if (player->skelAnime.curFrame >= 20.0f || player->skelAnime.animation !=
+                    ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_landing_roll)) {
+                sPilot.nativeRoll = false;
+                sPilot.rollFrames = 0;
+            }
+        } else {
+            --sPilot.rollFrames;
+        }
     }
     if (sPilot.landingFrames > 0) {
         --sPilot.landingFrames;
