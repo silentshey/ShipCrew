@@ -331,8 +331,9 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
     const bool descendingTowardWall =
         !grounded && falling && (sPilot.traversal == PilotTraversal::AutoJump || !wasGrounded) &&
         actor->speedXZ > 0.3f;
-    if ((!grounded && !descendingTowardWall) || (grounded && (!moving || actor->speedXZ < 0.3f)) ||
-        sPilot.lockedTarget != nullptr) {
+    // Native collision slows horizontal speed nearly to zero against a wall,
+    // so use the stick rather than speedXZ for grounded climb intent.
+    if ((!grounded && !descendingTowardWall) || (grounded && !moving) || sPilot.lockedTarget != nullptr) {
         sPilot.ledgeProbeFrames = 0;
         return false;
     }
