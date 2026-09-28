@@ -3988,6 +3988,34 @@ f32 ShipCrewPlayer_CalcGroundSpeedTarget(f32 stickMagnitude, f32 speedCap, s16 f
     return CLAMP(target, 0.0f, speedCap);
 }
 
+// Per-player P1 analog curve shared by both players: includes P1's
+// original analog deadzone, boots/slope, damage speed penalty and speed cap.
+f32 ShipCrewPlayer_CalcNativeAnalogSpeed(Player* player, f32 magnitude, s32 curved) {
+    if (magnitude <= 0.0f)
+        return 0.0f;
+    f32 target = magnitude;
+    if (curved) {
+        target -= 20.0f;
+        if (target < 0.0f)
+            target = 0.0f;
+        else {
+            const f32 temp = 1.0f - Math_CosS(target * 450.0f);
+            target = (SQ(temp) * 30.0f) + 7.0f;
+        }
+    } else {
+        target *= 0.8f;
+    }
+    f32 speedCap = player->unk_880;
+    const f32 pitch = Math_SinS(player->floorPitch);
+    const f32 floorInfluence = CLAMP(pitch, 0.0f, 0.6f);
+    if (player->unk_6C4 != 0.0f) {
+        speedCap -= player->unk_6C4 * 0.008f;
+        speedCap = CLAMP_MIN(speedCap, 2.0f);
+    }
+    target = target * 0.14f - 8.0f * floorInfluence * floorInfluence;
+    return CLAMP(target, 0.0f, speedCap);
+}
+
 // Linear mode is a straight line, increasing target speed at a steady rate relative to the control stick magnitude
 #define SPEED_MODE_LINEAR 0.0f
 
@@ -4004,59 +4032,16 @@ f32 ShipCrewPlayer_CalcGroundSpeedTarget(f32 stickMagnitude, f32 speedCap, s16 f
  */
 s32 Player_CalcSpeedAndYawFromControlStick(PlayState* play, Player* this, f32* outSpeedTarget, s16* outYawTarget,
                                            f32 speedMode) {
-    f32 temp;
-    f32 sinFloorPitch;
-    f32 floorPitchInfluence;
-    f32 speedCap;
-
     if ((this->unk_6AD != 0) || (play->transitionTrigger == TRANS_TRIGGER_START) ||
         (this->stateFlags1 & PLAYER_STATE1_LOADING)) {
         *outSpeedTarget = 0.0f;
         *outYawTarget = this->actor.shape.rot.y;
-    } else {
-        *outSpeedTarget = sControlStickMagnitude;
-        *outYawTarget = sControlStickAngle;
-
-        // The value of `speedMode` is never actually used. It only toggles this condition.
-        // See the definition of `SPEED_MODE_LINEAR` and `SPEED_MODE_CURVED` for more information.
-        if (speedMode != SPEED_MODE_LINEAR) {
-            *outSpeedTarget -= 20.0f;
-
-            if (*outSpeedTarget < 0.0f) {
-                // If control stick magnitude is below 20, return zero speed.
-                *outSpeedTarget = 0.0f;
-            } else {
-                // Cosine of the control stick magnitude isn't exactly meaningful, but
-                // it happens to give a desirable curve for grounded movement speed relative
-                // to control stick magnitude.
-                temp = 1.0f - Math_CosS(*outSpeedTarget * 450.0f);
-                *outSpeedTarget = (SQ(temp) * 30.0f) + 7.0f;
-            }
-        } else {
-            // Speed increases linearly relative to control stick magnitude
-            *outSpeedTarget *= 0.8f;
-        }
-
-        if (sControlStickMagnitude != 0.0f) {
-            sinFloorPitch = Math_SinS(this->floorPitch);
-            speedCap = this->unk_880;
-            floorPitchInfluence = CLAMP(sinFloorPitch, 0.0f, 0.6f);
-
-            if (this->unk_6C4 != 0.0f) {
-                speedCap -= this->unk_6C4 * 0.008f;
-                speedCap = CLAMP_MIN(speedCap, 2.0f);
-            }
-
-            *outSpeedTarget = (*outSpeedTarget * 0.14f) - (8.0f * floorPitchInfluence * floorPitchInfluence);
-            *outSpeedTarget = CLAMP(*outSpeedTarget, 0.0f, speedCap);
-
-            return true;
-        }
+        return false;
     }
-
-    return false;
+    *outYawTarget = sControlStickAngle;
+    *outSpeedTarget = ShipCrewPlayer_CalcNativeAnalogSpeed(this, sControlStickMagnitude, speedMode != SPEED_MODE_LINEAR);
+    return sControlStickMagnitude != 0.0f;
 }
-
 /**
  * Steps speed toward zero to at a rate defined by current boot data.
  * After zero is reached, speed will be held at zero.
@@ -4065,6 +4050,10 @@ s32 Player_CalcSpeedAndYawFromControlStick(PlayState* play, Player* this, f32* o
  */
 s32 Player_DecelerateToZero(Player* this) {
     return Math_StepToF(&this->linearVelocity, 0.0f, REG(43) / 100.0f);
+}
+
+s32 ShipCrewPlayer_ApplyNativeIdleBrake(Player* player) {
+    return Player_DecelerateToZero(player);
 }
 
 /**
@@ -5952,31 +5941,26 @@ void func_8083A434(PlayState* play, Player* this) {
     }
 }
 
-s32 func_8083A4A8(Player* this, PlayState* play) {
-    s16 yawDiff;
-    LinkAnimationHeader* anim;
-    f32 temp;
-
-    yawDiff = this->yaw - this->actor.shape.rot.y;
-
-    if ((ABS(yawDiff) < 0x1000) && (this->linearVelocity > 4.0f)) {
-        anim = &gPlayerAnim_link_normal_run_jump;
-    } else {
-        anim = &gPlayerAnim_link_normal_jump;
-    }
-
-    if (this->linearVelocity > (IREG(66) / 100.0f)) {
-        temp = IREG(67) / 100.0f;
-    } else {
-        temp = (IREG(68) / 100.0f) + ((IREG(69) * this->linearVelocity) / 1000.0f);
-    }
-
-    func_80838940(this, anim, temp, play, NA_SE_VO_LI_AUTO_JUMP);
-    this->av2.actionVar2 = 1;
-
-    return 1;
+// The exact P1 choice of autojump animation and takeoff velocity.
+LinkAnimationHeader* ShipCrewPlayer_SelectNativeAutoJump(Player* player, f32* verticalSpeed) {
+    const s16 yawDiff = player->yaw - player->actor.shape.rot.y;
+    LinkAnimationHeader* anim = (ABS(yawDiff) < 0x1000 && player->linearVelocity > 4.0f)
+                                   ? &gPlayerAnim_link_normal_run_jump
+                                   : &gPlayerAnim_link_normal_jump;
+    if (player->linearVelocity > IREG(66) / 100.0f)
+        *verticalSpeed = IREG(67) / 100.0f;
+    else
+        *verticalSpeed = IREG(68) / 100.0f + IREG(69) * player->linearVelocity / 1000.0f;
+    return anim;
 }
 
+s32 func_8083A4A8(Player* this, PlayState* play) {
+    f32 speed;
+    LinkAnimationHeader* anim = ShipCrewPlayer_SelectNativeAutoJump(this, &speed);
+    func_80838940(this, anim, speed, play, NA_SE_VO_LI_AUTO_JUMP);
+    this->av2.actionVar2 = 1;
+    return 1;
+}
 void func_8083A5C4(PlayState* play, Player* this, CollisionPoly* arg2, f32 arg3, LinkAnimationHeader* anim) {
     f32 nx = COLPOLY_GET_NORMAL(arg2->normal.x);
     f32 nz = COLPOLY_GET_NORMAL(arg2->normal.z);
@@ -7463,6 +7447,11 @@ void func_8083DFE0(Player* this, f32* arg1, s16* arg2) {
         Math_AsymStepToF(&this->linearVelocity, *arg1, 0.05f, 0.1f);
         Math_ScaledStepToS(&this->yaw, *arg2, 200);
     }
+}
+
+// The native P1 airborne turn/acceleration routine is pure Player*.
+void ShipCrewPlayer_ApplyNativeAirMotion(Player* player, f32 speedTarget, s16 yawTarget) {
+    func_8083DFE0(player, &speedTarget, &yawTarget);
 }
 
 static struct_80854578 D_80854578[] = {
