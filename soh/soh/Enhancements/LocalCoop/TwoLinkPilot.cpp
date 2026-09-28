@@ -723,9 +723,8 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
     // with forward momentum and an unobstructed facing direction. Never
     // assign a manual jump button to P2.
     if (wasGrounded && !grounded && sPilot.traversal != PilotTraversal::AutoJump &&
-        ShipCrewPlayer_ShouldNativeAutoJump(
-            player, player->floorProperty, actor->world.pos.y - actor->floorHeight,
-            static_cast<s16>(player->yaw - actor->shape.rot.y))) {
+        ShipCrewPlayer_ShouldNativeAutoJump(player, player->floorProperty, actor->world.pos.y - actor->floorHeight,
+                                            static_cast<s16>(player->yaw - actor->shape.rot.y))) {
         f32 jumpSpeed;
         LinkAnimationHeader* nativeAnim = ShipCrewPlayer_SelectNativeAutoJump(player, &jumpSpeed);
         SPDLOG_INFO("[ShipCrew] P2 autojump ground-leave: pos=({}, {}, {}) floor={} speed={}", actor->world.pos.x,
