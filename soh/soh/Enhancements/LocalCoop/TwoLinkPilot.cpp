@@ -922,7 +922,10 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                 ? std::max(3.0f,
                            ShipCrewPlayer_CalcGroundSpeedTarget(magnitude, speedCap, player->floorPitch, true) * 1.5f)
                 : kRollSpeed;
-        sPilot.rollYaw = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
+        // P1 commits rolls to Link's existing facing, not a fresh
+        // camera-relative stick heading at the button-press frame.
+        sPilot.rollYaw =
+            nativeMovement ? actor->shape.rot.y : static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
         sPilot.landingFrames = 0;
         if (nativeMovement) {
             // P1's roll starts at 1.25x playback and lasts through the
