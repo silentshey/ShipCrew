@@ -26,6 +26,7 @@ void Player_Draw(Actor* actor, PlayState* play);
 LinkAnimationHeader* ShipCrewPlayer_GetGroupAnimation(Player* player, s32 group);
 f32 ShipCrewPlayer_GetRunSpeedLimit(void);
 f32 ShipCrewPlayer_CalcGroundSpeedTarget(f32 magnitude, f32 speedCap, s16 floorPitch, s32 curved);
+s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* rise, Vec3f* stand, s16* facing);
 }
 
 // The experimental switch lives in the existing Controls settings screen.
@@ -33,6 +34,7 @@ f32 ShipCrewPlayer_CalcGroundSpeedTarget(f32 magnitude, f32 speedCap, s16 floorP
 #define SHIPCREW_PILOT_CVAR CVAR_SETTING("ShipCrew.TwoLinkPilot")
 #define SHIPCREW_SPLIT_CVAR CVAR_SETTING("ShipCrew.SplitScreenPilot")
 #define SHIPCREW_NATIVE_LOCOMOTION_CVAR CVAR_SETTING("ShipCrew.P2NativeLocomotion")
+#define SHIPCREW_NATIVE_TRAVERSAL_CVAR CVAR_SETTING("ShipCrew.P2NativeTraversal")
 
 namespace {
 
@@ -67,6 +69,7 @@ bool sRenderingSecondCamera = false;
 // action state or animation tables. When expanded to 4 players, move this
 // runtime into the common per-player component keyed by local player slot.
 enum class PilotItemPose { None, BombPickup, BombThrow, Nut };
+enum class PilotTraversal { None, AutoJump, HighStepWindup, Hanging, Climbing };
 struct PilotRuntime {
     Actor* actor = nullptr;
     Actor* heldBomb = nullptr;
@@ -83,6 +86,14 @@ struct PilotRuntime {
     s16 rollYaw = 0;
     bool nativeMovementPreviouslyEnabled = false;
     int landingFrames = 0;
+    int ledgeProbeFrames = 0;
+    int ledgeProbeType = 0;
+    int ledgeCooldownFrames = 0;
+    f32 takeoffY = 0.0f;
+    f32 ledgeRise = 0.0f;
+    Vec3f ledgeStand = {};
+    s16 ledgeFacing = 0;
+    PilotTraversal traversal = PilotTraversal::None;
     int itemFrames = 0;
     // Track shared ammo between P2 updates. A changed value outside a P2
     // item transaction comes from P1, a save edit, or an external sync.
@@ -137,6 +148,145 @@ Actor* Pilot_FindTarget(PlayState* play, Actor* pilot, Actor* exclude) {
 
 LinkAnimationHeader* Pilot_Animation(const char* asset) {
     return reinterpret_cast<LinkAnimationHeader*>(const_cast<char*>(asset));
+}
+
+
+void Pilot_ClearTraversal(Actor* actor, Player* player) {
+    sPilot.traversal = PilotTraversal::None;
+    sPilot.ledgeProbeFrames = 0;
+    player->stateFlags1 &= ~(PLAYER_STATE1_HANGING_OFF_LEDGE | PLAYER_STATE1_CLIMBING_LEDGE | PLAYER_STATE1_JUMPING);
+    actor->gravity = kPilotGravity;
+    actor->shape.yOffset = 0.0f;
+}
+
+void Pilot_BeginClimb(Player* player, PlayState* play, s32 type, bool fromHang) {
+    Actor* actor = &player->actor;
+    if (player->ageProperties == nullptr)
+        return;
+
+    const f32 rise = sPilot.ledgeStand.y - actor->world.pos.y;
+    actor->world.pos = sPilot.ledgeStand;
+    actor->velocity.y = 0.0f;
+    actor->speedXZ = player->linearVelocity = 0.0f;
+    actor->gravity = 0.0f;
+    actor->world.rot.y = actor->shape.rot.y = player->yaw = sPilot.ledgeFacing;
+    actor->bgCheckFlags |= BGCHECKFLAG_GROUND;
+    player->stateFlags1 &= ~PLAYER_STATE1_HANGING_OFF_LEDGE;
+    player->stateFlags1 |= PLAYER_STATE1_CLIMBING_LEDGE | PLAYER_STATE1_JUMPING;
+
+    LinkAnimationHeader* animation;
+    if (fromHang) {
+        animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_jump_climb_up);
+        actor->shape.yOffset -= rise * 100.0f;
+    } else if (type == PLAYER_LEDGE_CLIMB_3) {
+        animation = Pilot_Animation(gPlayerAnim_link_normal_150step_up);
+        actor->shape.yOffset -= (rise - 59.0f * player->ageProperties->unk_08) * 100.0f;
+    } else {
+        animation = Pilot_Animation(gPlayerAnim_link_normal_100step_up);
+        actor->shape.yOffset -= (rise - 41.0f * player->ageProperties->unk_08) * 100.0f;
+    }
+
+    sPilot.traversal = PilotTraversal::Climbing;
+    sPilot.ledgeCooldownFrames = 18;
+    LinkAnimation_Change(play, &player->skelAnime, animation, 1.3f, 0.0f, Animation_GetLastFrame(animation),
+                         ANIMMODE_ONCE, -3.0f);
+}
+
+void Pilot_BeginJump(Player* player, f32 verticalSpeed) {
+    Actor* actor = &player->actor;
+    actor->gravity = kPilotGravity;
+    actor->velocity.y = verticalSpeed;
+    actor->bgCheckFlags &= ~BGCHECKFLAG_GROUND;
+    player->stateFlags1 |= PLAYER_STATE1_JUMPING;
+    player->stateFlags1 &= ~(PLAYER_STATE1_HANGING_OFF_LEDGE | PLAYER_STATE1_CLIMBING_LEDGE);
+    sPilot.traversal = PilotTraversal::AutoJump;
+    sPilot.takeoffY = actor->world.pos.y;
+    sPilot.landingFrames = 0;
+    sPilot.ledgeCooldownFrames = 12;
+}
+
+void Pilot_BeginHang(Player* player, PlayState* play, f32 rise, const Vec3f& stand, s16 facing) {
+    Actor* actor = &player->actor;
+    sPilot.ledgeStand = stand;
+    sPilot.ledgeFacing = facing;
+    sPilot.ledgeRise = rise;
+    sPilot.traversal = PilotTraversal::Hanging;
+    sPilot.ledgeCooldownFrames = 12;
+    actor->world.pos = stand;
+    actor->shape.rot.y = actor->world.rot.y = player->yaw = facing;
+    actor->velocity.y = actor->speedXZ = player->linearVelocity = 0.0f;
+    actor->gravity = 0.0f;
+    player->stateFlags1 &= ~PLAYER_STATE1_JUMPING;
+    player->stateFlags1 |= PLAYER_STATE1_HANGING_OFF_LEDGE;
+    LinkAnimationHeader* anim = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_jump_climb_hold);
+    LinkAnimation_Change(play, &player->skelAnime, anim, 1.0f, 0.0f, Animation_GetLastFrame(anim), ANIMMODE_LOOP,
+                         -3.0f);
+}
+
+// Traversal owns P2 input/animation while hanging, stepping up or winding up
+// a tall-ledge jump. It never updates P1 or the global Player action function.
+bool Pilot_UpdateTraversal(Player* player, PlayState* play, const OSContPad& pad, u32 pressed, bool canAct) {
+    Actor* actor = &player->actor;
+    if (sPilot.traversal != PilotTraversal::Hanging && sPilot.traversal != PilotTraversal::Climbing &&
+        sPilot.traversal != PilotTraversal::HighStepWindup) {
+        return false;
+    }
+
+    if (!canAct) {
+        Pilot_ClearTraversal(actor, player);
+        return false;
+    }
+
+    actor->speedXZ = player->linearVelocity = 0.0f;
+    actor->velocity.y = 0.0f;
+    actor->gravity = 0.0f;
+    if (sPilot.traversal == PilotTraversal::Hanging) {
+        actor->world.pos = sPilot.ledgeStand;
+        if (pad.stick_y > 25 || (pressed & BTN_A)) {
+            Pilot_BeginClimb(player, play, PLAYER_LEDGE_CLIMB_3, true);
+        } else if (pad.stick_y < -25) {
+            // Drop outward from the wall rather than falling inside it.
+            const f32 direction = static_cast<f32>(sPilot.ledgeFacing) / kRadiansToN64Angle;
+            actor->world.pos.x -= std::sin(direction) * 12.0f;
+            actor->world.pos.z -= std::cos(direction) * 12.0f;
+            actor->world.pos.y -= 7.0f;
+            actor->bgCheckFlags &= ~BGCHECKFLAG_GROUND;
+            Pilot_ClearTraversal(actor, player);
+            sPilot.ledgeCooldownFrames = 20;
+            return false;
+        } else {
+            LinkAnimation_Update(play, &player->skelAnime);
+        }
+    }
+
+    if (sPilot.traversal == PilotTraversal::HighStepWindup) {
+        const bool finished = LinkAnimation_Update(play, &player->skelAnime) != 0;
+        if (player->skelAnime.curFrame >= 8.0f || finished) {
+            const f32 height = std::min(sPilot.ledgeRise, player->ageProperties->unk_0C);
+            const f32 speed = height * 0.072f + (gSaveContext.linkAge != LINK_AGE_ADULT ? 1.0f : 0.0f);
+            Pilot_BeginJump(player, speed);
+            actor->speedXZ = player->linearVelocity = 1.0f;
+            actor->world.rot.y = player->yaw = sPilot.ledgeFacing;
+            return false;
+        }
+    } else if (sPilot.traversal == PilotTraversal::Climbing) {
+        const bool finished = LinkAnimation_Update(play, &player->skelAnime) != 0;
+        if (player->skelAnime.curFrame > 5.0f)
+            Math_StepToF(&actor->shape.yOffset, 0.0f, 150.0f);
+        if (finished) {
+            Pilot_ClearTraversal(actor, player);
+            sPilot.landingFrames = kLandingFrames;
+            sPilot.ledgeCooldownFrames = 20;
+            return false;
+        }
+    }
+
+    // Skip ordinary physics, roll and item actions until the native animation
+    // stage finishes; keep the current actor focus updated for both cameras.
+    Actor_SetFocus(actor, 40.0f);
+    sPilot.lastObservedBombAmmo = AMMO(ITEM_BOMB);
+    sPilot.lastObservedNutAmmo = AMMO(ITEM_NUT);
+    return true;
 }
 
 // P1 calls Inventory_ChangeAmmo(item, -1), which caps the *result* to the
