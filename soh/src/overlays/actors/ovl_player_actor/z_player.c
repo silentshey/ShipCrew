@@ -15618,6 +15618,144 @@ void Player_Action_808502D0(Player* this, PlayState* play) {
     }
 }
 
+// P2 native melee pilot: reuse P1's original equipment state, strike
+// selection, sword action, damage quads, weapon trail, and shield models.
+// Only P2's input and animation queue are scoped here. These functions do
+// not change GET_PLAYER, P1's camera, shared inventory, or save equipment.
+s32 ShipCrewPlayer_PilotSwordItem(void) {
+    switch (B_BTN_ITEM) {
+        case ITEM_SWORD_KOKIRI:
+        case ITEM_SWORD_MASTER:
+        case ITEM_SWORD_BGS:
+        case ITEM_BROKEN_GORONS_SWORD:
+            return B_BTN_ITEM;
+        default:
+            return ITEM_NONE;
+    }
+}
+
+s32 ShipCrewPlayer_EquipPilotSword(PlayState* play, Player* player, s32 swordItem) {
+    s8 action;
+    if (play == NULL || player == NULL || player->ageProperties == NULL)
+        return false;
+    if (swordItem == ITEM_NONE)
+        return false;
+
+    action = Player_ItemToItemAction(swordItem);
+    if (Player_ActionToMeleeWeapon(action) == 0 || action == PLAYER_IA_HAMMER ||
+        action == PLAYER_IA_DEKU_STICK)
+        return false;
+
+    if (player->heldItemAction != action || player->heldItemId != swordItem) {
+        // Original P1 sword equipment and age-specific models, but no global
+        // B-button assignment changes and no extra inventory transaction.
+        player->heldItemId = swordItem;
+        player->nextModelGroup = Player_ActionToModelGroup(player, action);
+        Player_InitItemActionWithAnim(play, player, action);
+        func_80834644(play, player);
+    }
+    // If the shared equipment changes, rebuild this PLAYER's native model
+    // group without resetting its current attack or touching the save.
+    if (!(player->stateFlags1 & PLAYER_STATE1_SHIELDING) &&
+        player->modelGroup != Player_ActionToModelGroup(player, action))
+        Player_SetModelGroup(player, Player_ActionToModelGroup(player, action));
+
+    return Player_GetMeleeWeaponHeld(player) != 0;
+}
+
+void ShipCrewPlayer_SetPilotShield(Player* player, s32 guarding) {
+    if (player == NULL)
+        return;
+    if (guarding && player->currentShield != PLAYER_SHIELD_NONE) {
+        // P1's existing right-hand/sheath geometry and native shield quad
+        // are placed by Player_PostLimbDrawGameplay. No pilot-made hitbox.
+        player->stateFlags1 |= PLAYER_STATE1_SHIELDING;
+        Player_SetModelsForHoldingShield(player);
+    } else if (player->stateFlags1 & PLAYER_STATE1_SHIELDING) {
+        player->stateFlags1 &= ~PLAYER_STATE1_SHIELDING;
+        func_8008EC70(player); // P1 restores its sword/sheath model this way.
+        player->upperLimbRot.x = player->upperLimbRot.y = player->upperLimbRot.z = 0;
+    }
+}
+
+void ShipCrewPlayer_UpdatePilotCombatStick(Player* player, s16 stickYaw, s16 worldYaw, f32 magnitude) {
+    if (player == NULL)
+        return;
+    // Same history and native quadrant calculation as
+    // Player_ProcessControlStick, but use P2's actual camera world yaw.
+    player->prevControlStickMagnitude = magnitude;
+    player->controlStickDataIndex = (player->controlStickDataIndex + 1) % 4;
+    if (magnitude < 55.0f) {
+        player->controlStickDirections[player->controlStickDataIndex] = PLAYER_STICK_DIR_NONE;
+        player->controlStickSpinAngles[player->controlStickDataIndex] = -1;
+    } else {
+        player->controlStickDirections[player->controlStickDataIndex] =
+            (u16)((s16)(worldYaw - player->actor.shape.rot.y) + 0x2000) >> 14;
+        player->controlStickSpinAngles[player->controlStickDataIndex] = (u16)(stickYaw + 0x2000) >> 9;
+    }
+}
+
+s32 ShipCrewPlayer_IsPilotSwordAction(Player* player) {
+    return player != NULL &&
+           (player->actionFunc == Player_Action_808502D0 || player->actionFunc == Player_Action_808505DC);
+}
+
+s32 ShipCrewPlayer_BeginPilotSwordAttack(PlayState* play, Player* player, const Input* portInput, u32 pressed) {
+    if (play == NULL || player == NULL || portInput == NULL || !(pressed & BTN_B) ||
+        Player_GetMeleeWeaponHeld(player) == 0)
+        return false;
+
+    Input scopedInput = *portInput;
+    scopedInput.press.button = pressed;
+    Input* previousInput = sControlInput;
+    const s32 previousUseItem = sUseHeldItem;
+    AnimationContext_SetNextQueue(play);
+    sControlInput = &scopedInput;
+    sUseHeldItem = false;
+    // Original P1 handler chooses directional slash, stab, combo and
+    // one/two-handed animations from this player's action/equipment state.
+    const s32 started = Player_ActionHandler_7(player, play);
+    sUseHeldItem = previousUseItem;
+    sControlInput = previousInput;
+    if (started && ShipCrewPlayer_IsPilotSwordAction(player))
+        ShipCrewPlayer_QueueNativeAnimMovement(play, player);
+    AnimationContext_SetNextQueue(play);
+    return started && ShipCrewPlayer_IsPilotSwordAction(player);
+}
+
+s32 ShipCrewPlayer_TickPilotSword(PlayState* play, Player* player, const Input* portInput, u32 pressed) {
+    if (play == NULL || player == NULL || portInput == NULL || !ShipCrewPlayer_IsPilotSwordAction(player))
+        return false;
+
+    Input scopedInput = *portInput;
+    scopedInput.press.button = pressed;
+    Input* previousInput = sControlInput;
+    const s32 previousUseItem = sUseHeldItem;
+    AnimationContext_SetNextQueue(play);
+    sControlInput = &scopedInput;
+    sUseHeldItem = false;
+    // Invoke the ACTUAL P1 strike/rebound actions: same weapon frame gates,
+    // native wall rebound, colliders, damage flags and combo timing.
+    player->actionFunc(player, play);
+    sUseHeldItem = previousUseItem;
+    sControlInput = previousInput;
+    ShipCrewPlayer_QueueNativeAnimMovement(play, player);
+    AnimationContext_SetNextQueue(play);
+    return ShipCrewPlayer_IsPilotSwordAction(player);
+}
+
+void ShipCrewPlayer_EndPilotSword(PlayState* play, Player* player) {
+    if (play == NULL || player == NULL)
+        return;
+    // P2 must never carry a native combat action into ordinary pilot
+    // locomotion or a ladder after the experimental flag is disabled.
+    if (ShipCrewPlayer_IsPilotSwordAction(player))
+        func_8083C0E8(player, play);
+    func_80832318(player);
+    player->stateFlags2 &= ~(PLAYER_STATE2_SPIN_ATTACKING | PLAYER_STATE2_SWORD_LUNGE);
+    player->stateFlags3 &= ~PLAYER_STATE3_FINISHED_ATTACKING;
+}
+
 void Player_Action_808505DC(Player* this, PlayState* play) {
     LinkAnimation_Update(play, &this->skelAnime);
     Player_DecelerateToZero(this);
