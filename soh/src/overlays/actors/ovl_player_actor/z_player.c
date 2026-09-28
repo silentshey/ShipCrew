@@ -1941,8 +1941,8 @@ LinkAnimationHeader* ShipCrewPlayer_SelectNativeLadderRung(Player* player, s32 p
     // P1's av1 may be nonzero for free-climb walls; retain all four
     // original age-specific clip slots. Only ladder-only P2 uses 0/1.
     const s32 slot = direction < 0 ? (phase ^ 1) : phase;
-    player->skelAnime.prevTransl = direction < 0 ? player->ageProperties->unk_62[slot]
-                                                : player->ageProperties->unk_4A[slot];
+    player->skelAnime.prevTransl =
+        direction < 0 ? player->ageProperties->unk_62[slot] : player->ageProperties->unk_4A[slot];
     return player->ageProperties->unk_AC[slot];
 }
 
@@ -1952,8 +1952,7 @@ void ShipCrewPlayer_QueueNativeAnimMovement(PlayState* play, Player* player) {
         // finish BEFORE actor root movement. Reading jointTable during P2's
         // actor update (the previous pilot approach) reads the OLD frame.
         AnimationContext_SetMoveActor(play, &player->actor, &player->skelAnime,
-                                      (player->skelAnime.movementFlags & 4) ? 1.0f
-                                                                            : player->ageProperties->unk_08);
+                                      (player->skelAnime.movementFlags & 4) ? 1.0f : player->ageProperties->unk_08);
     }
 }
 
