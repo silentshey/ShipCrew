@@ -307,6 +307,189 @@ bool Pilot_UpdateTraversal(Player* player, PlayState* play, const OSContPad& pad
     return true;
 }
 
+// The ladder action is independently owned by P2. Original P1 ladder
+// animation assets and input-dependent playback rates are reused, but its
+// file-static control state and GET_PLAYER() action machine are not.
+void Pilot_ClearLadder(Player* player) {
+    sPilot.ladder = PilotLadder::None;
+    sPilot.ladderDirection = 0;
+    sPilot.ladderCooldown = 16;
+    player->stateFlags1 &= ~PLAYER_STATE1_CLIMBING_LADDER;
+    player->actor.gravity = kPilotGravity;
+    player->actor.shape.yOffset = 0.0f;
+}
+
+void Pilot_BeginLadder(Player* player, PlayState* play, bool fromTop, const Vec3f& anchor, s16 yaw, f32 bottomY,
+                       f32 topY) {
+    Actor* actor = &player->actor;
+    sPilot.ladder = fromTop ? PilotLadder::EnterTop : PilotLadder::EnterBottom;
+    sPilot.ladderAnchor = anchor;
+    sPilot.ladderTopEntry = actor->world.pos;
+    sPilot.ladderYaw = yaw;
+    sPilot.ladderBottomY = bottomY;
+    sPilot.ladderTopY = topY;
+    sPilot.ladderStep = 0;
+    sPilot.ladderDirection = 0;
+    actor->world.pos.x = anchor.x;
+    actor->world.pos.z = anchor.z;
+    actor->velocity.y = actor->speedXZ = player->linearVelocity = 0.0f;
+    actor->gravity = 0.0f;
+    actor->world.rot.y = actor->shape.rot.y = player->yaw = yaw;
+    actor->bgCheckFlags &= ~BGCHECKFLAG_GROUND;
+    player->stateFlags1 |= PLAYER_STATE1_CLIMBING_LADDER;
+    LinkAnimationHeader* anim = fromTop ? player->ageProperties->unk_A8 : player->ageProperties->unk_A4;
+    LinkAnimation_Change(play, &player->skelAnime, anim, 1.0f, 0.0f, Animation_GetLastFrame(anim), ANIMMODE_ONCE,
+                         -3.0f);
+}
+
+void Pilot_LadderDismount(Player* player, PlayState* play, bool atTop, const Vec3f& landing) {
+    Actor* actor = &player->actor;
+    actor->world.pos = landing;
+    actor->velocity.y = actor->speedXZ = player->linearVelocity = 0.0f;
+    actor->gravity = 0.0f;
+    actor->bgCheckFlags |= BGCHECKFLAG_GROUND;
+    LinkAnimationHeader* anim = atTop ? player->ageProperties->unk_CC[sPilot.ladderStep & 1]
+                                      : player->ageProperties->unk_C4[sPilot.ladderStep & 1];
+    sPilot.ladder = atTop ? PilotLadder::DismountTop : PilotLadder::DismountBottom;
+    sPilot.ladderDirection = 0;
+    LinkAnimation_Change(play, &player->skelAnime, anim, 4.0f / 3.0f, 0.0f, Animation_GetLastFrame(anim), ANIMMODE_ONCE,
+                         0.0f);
+}
+
+// Runs before ordinary movement so climbing never receives an independent
+// gravity step, stale roll animation or a second ammo transaction.
+bool Pilot_UpdateLadder(Player* player, PlayState* play, const OSContPad& pad, bool canAct) {
+    if (sPilot.ladder == PilotLadder::None)
+        return false;
+    Actor* actor = &player->actor;
+    if (!canAct || player->ageProperties == nullptr) {
+        Pilot_ClearLadder(player);
+        return false;
+    }
+
+    actor->prevPos = actor->world.pos;
+    actor->velocity.y = actor->speedXZ = player->linearVelocity = 0.0f;
+    actor->gravity = 0.0f;
+    actor->world.rot.y = actor->shape.rot.y = player->yaw = sPilot.ladderYaw;
+    player->stateFlags1 |= PLAYER_STATE1_CLIMBING_LADDER;
+    if (sPilot.ladder == PilotLadder::EnterTop || sPilot.ladder == PilotLadder::EnterBottom) {
+        const bool enteringFromTop = sPilot.ladder == PilotLadder::EnterTop;
+        if (LinkAnimation_Update(play, &player->skelAnime)) {
+            sPilot.ladder = PilotLadder::Active;
+            sPilot.ladderDirection = 0;
+            if (enteringFromTop)
+                actor->world.pos.y -= 2.0f;
+        }
+    } else if (sPilot.ladder == PilotLadder::DismountTop || sPilot.ladder == PilotLadder::DismountBottom) {
+        if (LinkAnimation_Update(play, &player->skelAnime))
+            Pilot_ClearLadder(player);
+    } else {
+        const int direction = pad.stick_y > 23 ? 1 : (pad.stick_y < -23 ? -1 : 0);
+        if (direction == 0) {
+            // Hold on the ladder at the current animation frame.
+            player->stateFlags2 |= PLAYER_STATE2_STATIONARY_LADDER;
+        } else {
+            const f32 stickSpeed = std::clamp(std::fabs(static_cast<f32>(pad.stick_y)) * 0.05f, 1.0f, 3.35f);
+            const f32 climbSpeed = stickSpeed + CVarGetInteger(CVAR_ENHANCEMENT("ClimbSpeed"), 0);
+            if (direction != sPilot.ladderDirection) {
+                sPilot.ladderDirection = direction;
+                LinkAnimationHeader* anim = player->ageProperties->unk_AC[sPilot.ladderStep & 1];
+                const f32 last = Animation_GetLastFrame(anim);
+                LinkAnimation_Change(play, &player->skelAnime, anim, direction * climbSpeed,
+                                     direction > 0 ? 0.0f : last, direction > 0 ? last : 0.0f, ANIMMODE_ONCE, 0.0f);
+            } else {
+                player->skelAnime.playSpeed = direction * climbSpeed;
+            }
+            if (LinkAnimation_Update(play, &player->skelAnime)) {
+                sPilot.ladderStep ^= 1;
+                sPilot.ladderDirection = 0;
+            }
+            // The vanilla ladder uses root translation from age-specific
+            // climbing assets. The separate pilot currently owns position,
+            // so reproduce that translation without Player_StartAnimMovement
+            // (which would mutate P1-only action globals).
+            actor->world.pos.y += direction * climbSpeed * player->ageProperties->unk_08 * 1.45f;
+
+            // A bottom-entry query can see only one segmented ladder polygon.
+            // Refresh the upper bound when the next tagged section is visible.
+            if (direction > 0 && actor->world.pos.y + 20.0f > sPilot.ladderTopY) {
+                Vec3f nextAnchor = {};
+                s16 nextYaw = 0;
+                f32 nextBottom = 0.0f;
+                f32 nextTop = 0.0f;
+                if (ShipCrewPlayer_QueryLadder(play, player, false, &nextAnchor, &nextYaw, &nextBottom, &nextTop) &&
+                    nextTop > sPilot.ladderTopY)
+                    sPilot.ladderTopY = nextTop;
+            }
+
+            if (direction < 0) {
+                Vec3f floorProbe = actor->world.pos;
+                floorProbe.y += 12.0f;
+                CollisionPoly* ground = nullptr;
+                const f32 floorY = BgCheck_EntityRaycastFloor1(&play->colCtx, &ground, &floorProbe);
+                if (ground != nullptr && actor->world.pos.y <= floorY + 14.0f &&
+                    actor->world.pos.y < sPilot.ladderTopY - 25.0f) {
+                    Vec3f landing = actor->world.pos;
+                    landing.y = floorY;
+                    Pilot_LadderDismount(player, play, false, landing);
+                }
+            } else {
+                const f32 dirX = Math_SinS(sPilot.ladderYaw);
+                const f32 dirZ = Math_CosS(sPilot.ladderYaw);
+                Vec3f upperProbe = actor->world.pos;
+                upperProbe.x += dirX * (player->ageProperties->wallCheckRadius + 13.0f);
+                upperProbe.z += dirZ * (player->ageProperties->wallCheckRadius + 13.0f);
+                upperProbe.y += player->ageProperties->unk_40;
+                CollisionPoly* upperFloor = nullptr;
+                const f32 upperY = BgCheck_EntityRaycastFloor1(&play->colCtx, &upperFloor, &upperProbe);
+                if (upperFloor != nullptr && actor->world.pos.y >= upperY - 7.0f &&
+                    upperY >= sPilot.ladderBottomY + 25.0f) {
+                    Vec3f landing = upperProbe;
+                    landing.y = upperY;
+                    Pilot_LadderDismount(player, play, true, landing);
+                } else if (actor->world.pos.y >= sPilot.ladderTopY - 3.0f &&
+                           sPilot.ladderTopEntry.y >= sPilot.ladderTopY - 14.0f) {
+                    // Return to the ORIGINAL platform when climbing back out
+                    // of the ladder P2 entered from above.
+                    Pilot_LadderDismount(player, play, true, sPilot.ladderTopEntry);
+                }
+            }
+        }
+    }
+    Actor_SetFocus(actor, 40.0f);
+    sPilot.lastObservedBombAmmo = AMMO(ITEM_BOMB);
+    sPilot.lastObservedNutAmmo = AMMO(ITEM_NUT);
+    return true;
+}
+
+bool Pilot_TryLadder(Player* player, PlayState* play, const OSContPad& pad, bool enabled, bool canAct,
+                     bool moving, bool carryingBomb) {
+    if (sPilot.ladderCooldown > 0)
+        --sPilot.ladderCooldown;
+    if (!enabled || !canAct || carryingBomb || !moving || sPilot.ledgeCooldownFrames > 0 ||
+        sPilot.ladderCooldown > 0 || sPilot.rollFrames > 0 || sPilot.itemFrames > 0 ||
+        sPilot.lockedTarget != nullptr || sPilot.traversal != PilotTraversal::None || player->ageProperties == nullptr)
+        return false;
+
+    Vec3f anchor = {};
+    s16 yaw = 0;
+    f32 bottomY = 0.0f;
+    f32 topY = 0.0f;
+    // Prefer the requested top descent: from ground directly above an
+    // actual flagged ladder, P2 can press DOWN without falling first.
+    if (pad.stick_y < -25 &&
+        ShipCrewPlayer_QueryLadder(play, player, true, &anchor, &yaw, &bottomY, &topY)) {
+        Pilot_BeginLadder(player, play, true, anchor, yaw, bottomY, topY);
+        return true;
+    }
+    if ((player->actor.bgCheckFlags & BGCHECKFLAG_GROUND) && pad.stick_y > 25 &&
+        ShipCrewPlayer_QueryLadder(play, player, false, &anchor, &yaw, &bottomY, &topY)) {
+        Pilot_BeginLadder(player, play, false, anchor, yaw, bottomY, topY);
+        return true;
+    }
+    return false;
+}
+
 // A separate P2 traversal transition layer sits on top of the tested P2
 // movement/physics. It uses the shared native wall geometry QUERY but owns
 // its own probe timer, jump phase, animation and player actor state.
