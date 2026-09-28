@@ -5379,6 +5379,13 @@ s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* outRise, Vec
 
     Actor* actor = &player->actor;
     PlayerAgeProperties* age = player->ageProperties;
+    // P1's ledge detection runs only after its genuine wall-interaction
+    // collision test succeeds. P2 used to probe arbitrary low rails/fences
+    // from a distance, causing inappropriate auto-mantles.
+    if ((actor->bgCheckFlags & BGCHECKFLAG_GROUND) &&
+        (!(actor->bgCheckFlags & BGCHECKFLAG_WALL) ||
+         !(actor->bgCheckFlags & BGCHECKFLAG_PLAYER_WALL_INTERACT)))
+        return PLAYER_LEDGE_CLIMB_NONE;
     if (player->stateFlags1 & (PLAYER_STATE1_CARRYING_ACTOR | PLAYER_STATE1_IN_WATER | PLAYER_STATE1_IN_CUTSCENE)) {
         return PLAYER_LEDGE_CLIMB_NONE;
     }
@@ -11645,6 +11652,30 @@ s32 Player_UpdateHoverBoots(Player* this) {
  * - Calculate floor poly angles
  *
  */
+// OoT has ONE authoritative PlayState and RoomContext. A second player
+// cannot independently load another scene; instead, allow P2 to request
+// P1's original scene-exit transaction when both local players have reached
+// the same nearby area. Do not hijack P1's camera across the entire map.
+s32 ShipCrewPlayer_TryPilotSharedSceneExit(PlayState* play, Player* p2) {
+    if (play == NULL || p2 == NULL || p2->actor.floorPoly == NULL ||
+        p2->actor.floorBgId != BGCHECK_SCENE || play->transitionTrigger != TRANS_TRIGGER_OFF ||
+        !(p2->actor.bgCheckFlags & BGCHECKFLAG_GROUND) ||
+        SurfaceType_GetSceneExitIndex(&play->colCtx, p2->actor.floorPoly, p2->actor.floorBgId) == 0)
+        return false;
+    Player* p1 = GET_PLAYER(play);
+    if (p1 == NULL || p1 == p2 || (p1->stateFlags1 & (PLAYER_STATE1_IN_CUTSCENE | PLAYER_STATE1_LOADING)) ||
+        !(p1->actor.bgCheckFlags & BGCHECKFLAG_GROUND))
+        return false;
+    const f32 dx = p1->actor.world.pos.x - p2->actor.world.pos.x;
+    const f32 dz = p1->actor.world.pos.z - p2->actor.world.pos.z;
+    const f32 dy = p1->actor.world.pos.y - p2->actor.world.pos.y;
+    if (dx * dx + dz * dz > 160.0f * 160.0f || fabsf(dy) > 65.0f)
+        return false;
+    // Use the actual original scene/entrance/rando/void/camera transition
+    // handler, not a second player-owned save or handmade scene reload.
+    return Player_HandleExitsAndVoids(play, p1, p2->actor.floorPoly, p2->actor.floorBgId);
+}
+
 void Player_ProcessSceneCollision(PlayState* play, Player* this) {
     static Vec3f sInteractWallCheckOffset = { 0.0f, 18.0f, 0.0f };
     u8 nextLedgeClimbType = PLAYER_LEDGE_CLIMB_NONE;
