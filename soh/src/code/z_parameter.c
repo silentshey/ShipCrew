@@ -4172,31 +4172,30 @@ void Interface_DrawItemButtons(PlayState* play) {
     // The split HUD draws separate scaled clusters after native icon handling.
     // Never draw the global P1 equipped-C backgrounds a second time.
     if (!ShipCrewCamera_IsSplitOverlayActive(play)) {
-    // C-Left Button Color & Texture
-    gDPPipeSync(OVERLAY_DISP++);
-    gDPSetPrimColor(OVERLAY_DISP++, 0, 0, cLeftButtonColor.r, cLeftButtonColor.g, cLeftButtonColor.b,
-                    interfaceCtx->cLeftAlpha);
-    gSPWideTextureRectangle(OVERLAY_DISP++, C_Left_BTN_Pos[0] << 2, C_Left_BTN_Pos[1] << 2,
-                            (C_Left_BTN_Pos[0] + R_ITEM_BTN_WIDTH(1)) << 2,
-                            (C_Left_BTN_Pos[1] + R_ITEM_BTN_WIDTH(1)) << 2, G_TX_RENDERTILE, 0, 0,
-                            R_ITEM_BTN_DD(1) << 1, R_ITEM_BTN_DD(1) << 1);
+        // C-Left Button Color & Texture
+        gDPPipeSync(OVERLAY_DISP++);
+        gDPSetPrimColor(OVERLAY_DISP++, 0, 0, cLeftButtonColor.r, cLeftButtonColor.g, cLeftButtonColor.b,
+                        interfaceCtx->cLeftAlpha);
+        gSPWideTextureRectangle(OVERLAY_DISP++, C_Left_BTN_Pos[0] << 2, C_Left_BTN_Pos[1] << 2,
+                                (C_Left_BTN_Pos[0] + R_ITEM_BTN_WIDTH(1)) << 2,
+                                (C_Left_BTN_Pos[1] + R_ITEM_BTN_WIDTH(1)) << 2, G_TX_RENDERTILE, 0, 0,
+                                R_ITEM_BTN_DD(1) << 1, R_ITEM_BTN_DD(1) << 1);
 
-    // C-Down Button Color & Texture
-    gDPSetPrimColor(OVERLAY_DISP++, 0, 0, cDownButtonColor.r, cDownButtonColor.g, cDownButtonColor.b,
-                    interfaceCtx->cDownAlpha);
-    gSPWideTextureRectangle(OVERLAY_DISP++, C_Down_BTN_Pos[0] << 2, C_Down_BTN_Pos[1] << 2,
-                            (C_Down_BTN_Pos[0] + R_ITEM_BTN_WIDTH(2)) << 2,
-                            (C_Down_BTN_Pos[1] + R_ITEM_BTN_WIDTH(2)) << 2, G_TX_RENDERTILE, 0, 0,
-                            R_ITEM_BTN_DD(2) << 1, R_ITEM_BTN_DD(2) << 1);
+        // C-Down Button Color & Texture
+        gDPSetPrimColor(OVERLAY_DISP++, 0, 0, cDownButtonColor.r, cDownButtonColor.g, cDownButtonColor.b,
+                        interfaceCtx->cDownAlpha);
+        gSPWideTextureRectangle(OVERLAY_DISP++, C_Down_BTN_Pos[0] << 2, C_Down_BTN_Pos[1] << 2,
+                                (C_Down_BTN_Pos[0] + R_ITEM_BTN_WIDTH(2)) << 2,
+                                (C_Down_BTN_Pos[1] + R_ITEM_BTN_WIDTH(2)) << 2, G_TX_RENDERTILE, 0, 0,
+                                R_ITEM_BTN_DD(2) << 1, R_ITEM_BTN_DD(2) << 1);
 
-    // C-Right Button Color & Texture
-    gDPSetPrimColor(OVERLAY_DISP++, 0, 0, cRightButtonColor.r, cRightButtonColor.g, cRightButtonColor.b,
-                    interfaceCtx->cRightAlpha);
-    gSPWideTextureRectangle(OVERLAY_DISP++, C_Right_BTN_Pos[0] << 2, C_Right_BTN_Pos[1] << 2,
-                            (C_Right_BTN_Pos[0] + R_ITEM_BTN_WIDTH(3)) << 2,
-                            (C_Right_BTN_Pos[1] + R_ITEM_BTN_WIDTH(3)) << 2, G_TX_RENDERTILE, 0, 0,
-                            R_ITEM_BTN_DD(3) << 1, R_ITEM_BTN_DD(3) << 1);
-
+        // C-Right Button Color & Texture
+        gDPSetPrimColor(OVERLAY_DISP++, 0, 0, cRightButtonColor.r, cRightButtonColor.g, cRightButtonColor.b,
+                        interfaceCtx->cRightAlpha);
+        gSPWideTextureRectangle(OVERLAY_DISP++, C_Right_BTN_Pos[0] << 2, C_Right_BTN_Pos[1] << 2,
+                                (C_Right_BTN_Pos[0] + R_ITEM_BTN_WIDTH(3)) << 2,
+                                (C_Right_BTN_Pos[1] + R_ITEM_BTN_WIDTH(3)) << 2, G_TX_RENDERTILE, 0, 0,
+                                R_ITEM_BTN_DD(3) << 1, R_ITEM_BTN_DD(3) << 1);
     }
 
     if ((pauseCtx->state < 8) || (pauseCtx->state >= 18)) {
@@ -5119,34 +5118,34 @@ static void ShipCrew_DrawCSlot(PlayState* play, s16 x, s16 y, s16 item, s16 alph
     gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATEIA_PRIM, G_CC_MODULATEIA_PRIM);
     gDPSetPrimColor(OVERLAY_DISP++, 0, 0, 255, 160, 0, alpha);
     gDPSetEnvColor(OVERLAY_DISP++, 0, 0, 0, 255);
-    OVERLAY_DISP = Gfx_TextureIA8(OVERLAY_DISP, gButtonBackgroundTex, 32, 32, x, y, 19, 19,
-                                   (32 << 10) / 19, (32 << 10) / 19);
+    OVERLAY_DISP =
+        Gfx_TextureIA8(OVERLAY_DISP, gButtonBackgroundTex, 32, 32, x, y, 19, 19, (32 << 10) / 19, (32 << 10) / 19);
     // OPEN_DISPS/CLOSE_DISPS must be paired exactly once: these macros
     // establish a lexical display-list scope, so no early close/return.
     if (item >= 0 && item < 0xF0) {
-    gDPPipeSync(OVERLAY_DISP++);
-    gDPSetPrimColor(OVERLAY_DISP++, 0, 0, 255, 255, 255, alpha);
-    gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATERGBA_PRIM, G_CC_MODULATERGBA_PRIM);
-    gDPLoadTextureBlock(OVERLAY_DISP++, gItemIcons[item], G_IM_FMT_RGBA, G_IM_SIZ_32b, 32, 32, 0,
-                        G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP,
-                        G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD, G_TX_NOLOD);
-    gSPWideTextureRectangle(OVERLAY_DISP++, (x + 2) << 2, (y + 2) << 2, (x + 17) << 2, (y + 17) << 2,
-                            G_TX_RENDERTILE, 0, 0, (32 << 10) / 15, (32 << 10) / 15);
-    s16 ammoItem = item;
-    if (item >= ITEM_BOW_ARROW_FIRE && item <= ITEM_BOW_ARROW_LIGHT)
-        ammoItem = ITEM_BOW;
-    if (ammoItem == ITEM_BOMB || ammoItem == ITEM_NUT || ammoItem == ITEM_STICK || ammoItem == ITEM_BOW ||
-        ammoItem == ITEM_SLINGSHOT || ammoItem == ITEM_BOMBCHU || ammoItem == ITEM_BEAN) {
-        const s16 count = MAX(0, MIN(99, AMMO(ammoItem)));
         gDPPipeSync(OVERLAY_DISP++);
-        gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATEIA_PRIM, G_CC_MODULATEIA_PRIM);
-        gDPSetPrimColor(OVERLAY_DISP++, 0, 0, count ? 255 : 120, count ? 255 : 120, count ? 255 : 120, alpha);
-        if (count >= 10)
-            OVERLAY_DISP = Gfx_TextureIA8(OVERLAY_DISP, (u8*)_gAmmoDigit0Tex[count / 10], 8, 8,
-                                           x + 7, y + 14, 8, 8, 1 << 10, 1 << 10);
-        OVERLAY_DISP = Gfx_TextureIA8(OVERLAY_DISP, (u8*)_gAmmoDigit0Tex[count % 10], 8, 8,
-                                       x + 13, y + 14, 8, 8, 1 << 10, 1 << 10);
-    }
+        gDPSetPrimColor(OVERLAY_DISP++, 0, 0, 255, 255, 255, alpha);
+        gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATERGBA_PRIM, G_CC_MODULATERGBA_PRIM);
+        gDPLoadTextureBlock(OVERLAY_DISP++, gItemIcons[item], G_IM_FMT_RGBA, G_IM_SIZ_32b, 32, 32, 0,
+                            G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD,
+                            G_TX_NOLOD);
+        gSPWideTextureRectangle(OVERLAY_DISP++, (x + 2) << 2, (y + 2) << 2, (x + 17) << 2, (y + 17) << 2,
+                                G_TX_RENDERTILE, 0, 0, (32 << 10) / 15, (32 << 10) / 15);
+        s16 ammoItem = item;
+        if (item >= ITEM_BOW_ARROW_FIRE && item <= ITEM_BOW_ARROW_LIGHT)
+            ammoItem = ITEM_BOW;
+        if (ammoItem == ITEM_BOMB || ammoItem == ITEM_NUT || ammoItem == ITEM_STICK || ammoItem == ITEM_BOW ||
+            ammoItem == ITEM_SLINGSHOT || ammoItem == ITEM_BOMBCHU || ammoItem == ITEM_BEAN) {
+            const s16 count = MAX(0, MIN(99, AMMO(ammoItem)));
+            gDPPipeSync(OVERLAY_DISP++);
+            gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATEIA_PRIM, G_CC_MODULATEIA_PRIM);
+            gDPSetPrimColor(OVERLAY_DISP++, 0, 0, count ? 255 : 120, count ? 255 : 120, count ? 255 : 120, alpha);
+            if (count >= 10)
+                OVERLAY_DISP = Gfx_TextureIA8(OVERLAY_DISP, (u8*)_gAmmoDigit0Tex[count / 10], 8, 8, x + 7, y + 14, 8, 8,
+                                              1 << 10, 1 << 10);
+            OVERLAY_DISP = Gfx_TextureIA8(OVERLAY_DISP, (u8*)_gAmmoDigit0Tex[count % 10], 8, 8, x + 13, y + 14, 8, 8,
+                                          1 << 10, 1 << 10);
+        }
     }
     CLOSE_DISPS(play->state.gfxCtx);
 }
@@ -5615,42 +5614,42 @@ void Interface_Draw(PlayState* play) {
         // In split gameplay the original native cluster is replaced by the
         // independent compact P1/P2 clusters at the bottom of each viewport.
         if (!ShipCrewCamera_IsSplitOverlayActive(play)) {
-        // C-Left Button Icon & Ammo Count
-        if (gSaveContext.equips.buttonItems[1] < 0xF0) {
-            gDPSetPrimColor(OVERLAY_DISP++, 0, 0, 255, 255, 255, interfaceCtx->cLeftAlpha);
-            gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATERGBA_PRIM, G_CC_MODULATERGBA_PRIM);
-            Interface_DrawItemIconTexture(play, gItemIcons[gSaveContext.equips.buttonItems[1]], 1);
+            // C-Left Button Icon & Ammo Count
+            if (gSaveContext.equips.buttonItems[1] < 0xF0) {
+                gDPSetPrimColor(OVERLAY_DISP++, 0, 0, 255, 255, 255, interfaceCtx->cLeftAlpha);
+                gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATERGBA_PRIM, G_CC_MODULATERGBA_PRIM);
+                Interface_DrawItemIconTexture(play, gItemIcons[gSaveContext.equips.buttonItems[1]], 1);
+                gDPPipeSync(OVERLAY_DISP++);
+                gDPSetCombineLERP(OVERLAY_DISP++, PRIMITIVE, ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0,
+                                  PRIMITIVE, ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0);
+                Interface_DrawAmmoCount(play, 1, interfaceCtx->cLeftAlpha);
+            }
+
             gDPPipeSync(OVERLAY_DISP++);
-            gDPSetCombineLERP(OVERLAY_DISP++, PRIMITIVE, ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0,
-                              PRIMITIVE, ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0);
-            Interface_DrawAmmoCount(play, 1, interfaceCtx->cLeftAlpha);
-        }
 
-        gDPPipeSync(OVERLAY_DISP++);
+            // C-Down Button Icon & Ammo Count
+            if (gSaveContext.equips.buttonItems[2] < 0xF0) {
+                gDPSetPrimColor(OVERLAY_DISP++, 0, 0, 255, 255, 255, interfaceCtx->cDownAlpha);
+                gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATERGBA_PRIM, G_CC_MODULATERGBA_PRIM);
+                Interface_DrawItemIconTexture(play, gItemIcons[gSaveContext.equips.buttonItems[2]], 2);
+                gDPPipeSync(OVERLAY_DISP++);
+                gDPSetCombineLERP(OVERLAY_DISP++, PRIMITIVE, ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0,
+                                  PRIMITIVE, ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0);
+                Interface_DrawAmmoCount(play, 2, interfaceCtx->cDownAlpha);
+            }
 
-        // C-Down Button Icon & Ammo Count
-        if (gSaveContext.equips.buttonItems[2] < 0xF0) {
-            gDPSetPrimColor(OVERLAY_DISP++, 0, 0, 255, 255, 255, interfaceCtx->cDownAlpha);
-            gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATERGBA_PRIM, G_CC_MODULATERGBA_PRIM);
-            Interface_DrawItemIconTexture(play, gItemIcons[gSaveContext.equips.buttonItems[2]], 2);
             gDPPipeSync(OVERLAY_DISP++);
-            gDPSetCombineLERP(OVERLAY_DISP++, PRIMITIVE, ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0,
-                              PRIMITIVE, ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0);
-            Interface_DrawAmmoCount(play, 2, interfaceCtx->cDownAlpha);
-        }
 
-        gDPPipeSync(OVERLAY_DISP++);
-
-        // C-Right Button Icon & Ammo Count
-        if (gSaveContext.equips.buttonItems[3] < 0xF0) {
-            gDPSetPrimColor(OVERLAY_DISP++, 0, 0, 255, 255, 255, interfaceCtx->cRightAlpha);
-            gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATERGBA_PRIM, G_CC_MODULATERGBA_PRIM);
-            Interface_DrawItemIconTexture(play, gItemIcons[gSaveContext.equips.buttonItems[3]], 3);
-            gDPPipeSync(OVERLAY_DISP++);
-            gDPSetCombineLERP(OVERLAY_DISP++, PRIMITIVE, ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0,
-                              PRIMITIVE, ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0);
-            Interface_DrawAmmoCount(play, 3, interfaceCtx->cRightAlpha);
-        }
+            // C-Right Button Icon & Ammo Count
+            if (gSaveContext.equips.buttonItems[3] < 0xF0) {
+                gDPSetPrimColor(OVERLAY_DISP++, 0, 0, 255, 255, 255, interfaceCtx->cRightAlpha);
+                gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATERGBA_PRIM, G_CC_MODULATERGBA_PRIM);
+                Interface_DrawItemIconTexture(play, gItemIcons[gSaveContext.equips.buttonItems[3]], 3);
+                gDPPipeSync(OVERLAY_DISP++);
+                gDPSetCombineLERP(OVERLAY_DISP++, PRIMITIVE, ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0,
+                                  PRIMITIVE, ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0);
+                Interface_DrawAmmoCount(play, 3, interfaceCtx->cRightAlpha);
+            }
 
         } else {
             ShipCrew_DrawDualCButtons(play);
