@@ -49,6 +49,7 @@ s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* rise, Vec3f*
 s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec3f* anchor, s16* facing, f32* bottomY,
                                f32* topY, s16 approachYaw);
 s32 ShipCrewPlayer_QueryCrawlspace(PlayState* play, Player* player, Vec3f* center);
+s32 ShipCrewPlayer_ShouldLeaveCrawlspace(PlayState* play, Player* player, f32 crawlSpeed);
 s32 ShipCrewPlayer_QueryNativeVine(PlayState* play, Player* player, s16 approachYaw, Vec3f* anchor, s16* facing,
                                    f32* bottomY, f32* topY);
 s32 ShipCrewPlayer_CanLiftContextActor(Actor* actor);
@@ -111,6 +112,7 @@ struct PilotRuntime {
     PilotCrawl crawl = PilotCrawl::None;
     s16 crawlYaw = 0;
     f32 crawlDistance = 0.0f;
+    bool crawlExitForward = true;
     PilotLockMove lockMove = PilotLockMove::None;
     bool parallelTargeting = false;
     int parallelRecenterFrames = 0;
@@ -752,6 +754,13 @@ bool Pilot_TryCrawl(Player* player, PlayState* play, bool enabled, bool canAct, 
     actor->world.pos.z = center.z + standOff * COLPOLY_GET_NORMAL(wall->normal.z);
     sPilot.crawl = PilotCrawl::Enter;
     sPilot.crawlDistance = 0.0f;
+    // P1's native crawl action drops ordinary lock-on before entering.
+    // Otherwise P2's independent camera can remain in BATTLE/TARGET mode.
+    sPilot.lockedTarget = nullptr;
+    sPilot.parallelTargeting = false;
+    sPilot.parallelRecenterFrames = 0;
+    player->focusActor = nullptr;
+    player->stateFlags1 &= ~(PLAYER_STATE1_Z_TARGETING | PLAYER_STATE1_PARALLEL);
     sPilot.crawlYaw = forward;
     actor->shape.rot.y = actor->world.rot.y = player->yaw = forward;
     actor->speedXZ = actor->velocity.y = player->linearVelocity = 0.0f;
@@ -772,10 +781,17 @@ bool Pilot_UpdateCrawl(Player* player, PlayState* play, const OSContPad& pad) {
     actor->speedXZ = actor->velocity.y = player->linearVelocity = actor->gravity = 0.0f;
     actor->shape.rot.y = actor->world.rot.y = player->yaw = sPilot.crawlYaw;
     player->stateFlags2 |= PLAYER_STATE2_CRAWLING;
+    player->stateFlags1 &= ~(PLAYER_STATE1_Z_TARGETING | PLAYER_STATE1_PARALLEL);
+    player->focusActor = nullptr;
+
     if (sPilot.crawl != PilotCrawl::Move) {
-        const bool complete = LinkAnimation_Update(play, &player->skelAnime) != 0;
+        // Reuse the original P1 child tunnel entry/exit clips and the same
+        // root-motion queue; isolate P2's animation queue from P1.
+        AnimationContext_SetNextQueue(play);
+        const bool finished = LinkAnimation_Update(play, &player->skelAnime) != 0;
         ShipCrewPlayer_QueueNativeAnimMovement(play, player);
-        if (complete) {
+        AnimationContext_SetNextQueue(play);
+        if (finished) {
             player->skelAnime.movementFlags = 0;
             if (sPilot.crawl == PilotCrawl::Enter) {
                 sPilot.crawl = PilotCrawl::Move;
@@ -784,44 +800,88 @@ bool Pilot_UpdateCrawl(Player* player, PlayState* play, const OSContPad& pad) {
                 sPilot.contextCooldown = 20;
                 player->stateFlags2 &= ~PLAYER_STATE2_CRAWLING;
                 ShipCrewPlayer_ResetNativeGravity(player);
+                Actor_UpdateBgCheckInfo(play, actor, 26.0f, player->ageProperties->wallCheckRadius,
+                                        player->ageProperties->ceilingCheckHeight, 0x3F);
+                SPDLOG_INFO("[ShipCrew] P2 crawlspace stand-up complete");
             }
         }
     } else {
-        // P1's tunnel motion: signed stick Y * 0.03, no normal running.
+        // Original P1 tunnel motion is control stick Y * 0.03; it advances
+        // horizontally and tests the tagged INTERIOR exit wall on contact.
         const f32 step = pad.stick_y * 0.03f;
         if (std::fabs(step) > 0.15f) {
-            const s16 facing = step > 0.0f ? sPilot.crawlYaw : (s16)(sPilot.crawlYaw + 0x8000);
-            Vec3f from = actor->world.pos;
-            from.y += 26.0f;
-            Vec3f to = from;
-            to.x += Math_SinS(facing) * 30.0f;
-            to.z += Math_CosS(facing) * 30.0f;
-            Vec3f hit = {};
-            CollisionPoly* wall = nullptr;
-            s32 bgId = BGCHECK_SCENE;
-            const bool exitWall =
-                sPilot.crawlDistance > 22.0f &&
-                BgCheck_EntityLineTest1(&play->colCtx, &from, &to, &hit, &wall, true, false, false, true, &bgId) &&
-                wall != nullptr && (SurfaceType_GetWallFlags(&play->colCtx, wall, bgId) & WALL_FLAG_CRAWLSPACE);
-            if (exitWall) {
+            const s16 movementYaw = step >= 0.0f ? sPilot.crawlYaw : (s16)(sPilot.crawlYaw + 0x8000);
+            actor->world.pos.x += Math_SinS(sPilot.crawlYaw) * step;
+            actor->world.pos.z += Math_CosS(sPilot.crawlYaw) * step;
+            sPilot.crawlDistance += std::fabs(step);
+
+            // Previously P2 never refreshed its wall collision during crawl.
+            // That left wallPoly pointing at the ENTRANCE indefinitely, so
+            // the internal exit wall could never be identified.
+            Actor_UpdateBgCheckInfo(play, actor, 26.0f, player->ageProperties->wallCheckRadius,
+                                    player->ageProperties->ceilingCheckHeight, 0x3F);
+            bool exitWall = ShipCrewPlayer_ShouldLeaveCrawlspace(play, player, step);
+            if (!exitWall && sPilot.crawlDistance > 22.0f) {
+                // Some hollow crawl holes have only a narrow interior
+                // collision polygon. Probe the original forward direction
+                // when the capsule did not report WALL this exact frame.
+                Vec3f from = actor->world.pos;
+                from.y += 26.0f;
+                Vec3f to = from;
+                to.x += Math_SinS(movementYaw) * 28.0f;
+                to.z += Math_CosS(movementYaw) * 28.0f;
+                Vec3f hit = {};
+                CollisionPoly* wall = nullptr;
+                s32 bgId = BGCHECK_SCENE;
+                if (BgCheck_EntityLineTest1(&play->colCtx, &from, &to, &hit, &wall, true, false, false, true,
+                                             &bgId) &&
+                    wall != nullptr &&
+                    (SurfaceType_GetWallFlags(&play->colCtx, wall, bgId) & WALL_FLAG_CRAWLSPACE)) {
+                    // Apply P1's exact surface and signed facing test to the
+                    // P2 candidate instead of interpreting every nearby
+                    // tagged wall as a tunnel exit.
+                    CollisionPoly* oldWall = actor->wallPoly;
+                    const s32 oldBgId = actor->wallBgId;
+                    const s16 oldWallYaw = actor->wallYaw;
+                    const u32 oldBgFlags = actor->bgCheckFlags;
+                    actor->wallPoly = wall;
+                    actor->wallBgId = bgId;
+                    actor->wallYaw = Math_Atan2S(wall->normal.z, wall->normal.x);
+                    actor->bgCheckFlags |= BGCHECKFLAG_WALL;
+                    exitWall = ShipCrewPlayer_ShouldLeaveCrawlspace(play, player, step);
+                    if (!exitWall) {
+                        actor->wallPoly = oldWall;
+                        actor->wallBgId = oldBgId;
+                        actor->wallYaw = oldWallYaw;
+                        actor->bgCheckFlags = oldBgFlags;
+                    }
+                }
+            }
+
+            if (exitWall && sPilot.crawlDistance > 22.0f) {
                 sPilot.crawl = PilotCrawl::Exit;
-                LinkAnimationHeader* anim = Pilot_Animation(step > 0.0f ? gPlayerAnim_link_child_tunnel_end
-                                                                        : gPlayerAnim_link_child_tunnel_start);
+                sPilot.crawlExitForward = step > 0.0f;
+                // Like P1, face the actual exit wall, not the entrance yaw.
+                actor->shape.rot.y = actor->world.rot.y = player->yaw =
+                    sPilot.crawlExitForward ? (s16)(actor->wallYaw + 0x8000) : actor->wallYaw;
+                LinkAnimationHeader* anim = Pilot_Animation(
+                    sPilot.crawlExitForward ? gPlayerAnim_link_child_tunnel_end : gPlayerAnim_link_child_tunnel_start);
                 const f32 last = Animation_GetLastFrame(anim);
+                AnimationContext_SetNextQueue(play);
                 player->skelAnime.movementFlags = 0x9D;
-                LinkAnimation_Change(play, &player->skelAnime, anim, step > 0.0f ? 1.0f : -1.0f,
-                                     step > 0.0f ? 0.0f : last, step > 0.0f ? last : 0.0f, ANIMMODE_ONCE, 0.0f);
-                SPDLOG_INFO("[ShipCrew] P2 crawlspace exit");
-            } else {
-                actor->world.pos.x += Math_SinS(sPilot.crawlYaw) * step;
-                actor->world.pos.z += Math_CosS(sPilot.crawlYaw) * step;
-                sPilot.crawlDistance += std::fabs(step);
+                LinkAnimation_Change(play, &player->skelAnime, anim, sPilot.crawlExitForward ? 1.0f : -1.0f,
+                                     sPilot.crawlExitForward ? 0.0f : last,
+                                     sPilot.crawlExitForward ? last : 0.0f, ANIMMODE_ONCE, 0.0f);
+                AnimationContext_SetNextQueue(play);
+                SPDLOG_INFO("[ShipCrew] P2 native crawl exit: forward={} wallYaw={} travelled={}",
+                            sPilot.crawlExitForward, actor->wallYaw, sPilot.crawlDistance);
             }
         }
     }
     Actor_SetFocus(actor, 25.0f);
     return true;
 }
+
 
 void Pilot_ConsumeOneSharedAmmo(s16 item, s16 countBeforeSpawn) {
     const s16 expected = countBeforeSpawn - 1;
@@ -1765,6 +1825,22 @@ static RegisterShipInitFunc sRegisterPilot(Pilot_RegisterHooks);
 
 // P2's independently allocated native camera is updated once AFTER the
 // engine's P1 camera, never during actor update or scene rendering.
+// P2's private camera can reproduce the original 9601/9602 crawl-exit
+// presentation without allocating a global one-point cutscene that would
+// steal P1's main camera and block independent movement.
+extern "C" s32 ShipCrewPilot_GetCrawlExitCamera(PlayState* play, s32* forward, f32* progress) {
+    if (play == nullptr || forward == nullptr || progress == nullptr ||
+        sPilot.crawl != PilotCrawl::Exit || FindPilotActor(play) != sPilot.actor)
+        return false;
+    Player* p2 = reinterpret_cast<Player*>(sPilot.actor);
+    const f32 last = Animation_GetLastFrame(p2->skelAnime.animation);
+    *forward = sPilot.crawlExitForward;
+    *progress = last > 0.0f ? std::clamp(p2->skelAnime.curFrame / last, 0.0f, 1.0f) : 0.0f;
+    if (!sPilot.crawlExitForward)
+        *progress = 1.0f - *progress; // Reverse clip plays last -> zero.
+    return true;
+}
+
 extern "C" s32 ShipCrewCamera_GetSecondParallel(PlayState* play) {
     if (play == nullptr || sPilot.actor == nullptr || FindPilotActor(play) != sPilot.actor)
         return false;
