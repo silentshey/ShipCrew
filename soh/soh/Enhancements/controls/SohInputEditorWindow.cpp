@@ -1662,9 +1662,22 @@ void SohInputEditorWindow::DrawLinkTab() {
                                   "Link's analog speed curve, turn braking, acceleration, rolling speed, "
                                   "age-specific collision checks and equipment-aware animation groups.\\n"
                                   "Adds independent targeting strafe/backpedal animations. "
-                                  "Does not yet provide native auto-jumps, climbing, swimming, sword combat "
-                                  "or every scripted action; those require per-player action-state isolation.\\n"
+                                  "Automatic jumps/ledge moves can be enabled separately below. "
+                                  "Swimming, sword combat and scripted actions still need "
+                                  "per-player action-state isolation.\\n"
                                   "Disable to retain the previous tested P2 movement. Use a test save."));
+
+        CVarCheckbox("ShipCrew: P2 Automatic Jump + Ledge Traversal (Experimental)",
+                     CVAR_SETTING("ShipCrew.P2NativeTraversal"),
+                     CheckboxOptions()
+                         .Color(THEME_COLOR)
+                         .Tooltip("Requires Native-Style P2 Movement above. Adds run-off auto-jumps, "
+                                  "age-aware ledge probes, low/medium ledge steps, high-ledge jump "
+                                  "startups and an independent hanging/climb animation state.\\n"
+                                  "While hanging, press UP to climb or DOWN to drop. A also climbs. "
+                                  "No manual jump button. Ladders, swimming and other scripted "
+                                  "actions are not included. Use a test save.\\n"
+                                  "Disable to keep PR #16 movement behavior."));
 
         DrawPortMappings(portIndex);
 
