@@ -779,7 +779,10 @@ bool Pilot_UpdateCrawl(Player* player, PlayState* play, const OSContPad& pad) {
     Actor* actor = &player->actor;
     actor->prevPos = actor->world.pos;
     actor->speedXZ = actor->velocity.y = player->linearVelocity = actor->gravity = 0.0f;
-    actor->shape.rot.y = actor->world.rot.y = player->yaw = sPilot.crawlYaw;
+    // The native exit clip faces its own exit wall, not the original entry
+    // direction. Preserve that yaw for the full animation/root movement.
+    if (sPilot.crawl != PilotCrawl::Exit)
+        actor->shape.rot.y = actor->world.rot.y = player->yaw = sPilot.crawlYaw;
     player->stateFlags2 |= PLAYER_STATE2_CRAWLING;
     player->stateFlags1 &= ~(PLAYER_STATE1_Z_TARGETING | PLAYER_STATE1_PARALLEL);
     player->focusActor = nullptr;
@@ -818,8 +821,9 @@ bool Pilot_UpdateCrawl(Player* player, PlayState* play, const OSContPad& pad) {
             // Previously P2 never refreshed its wall collision during crawl.
             // That left wallPoly pointing at the ENTRANCE indefinitely, so
             // the internal exit wall could never be identified.
-            Actor_UpdateBgCheckInfo(play, actor, 26.0f, player->ageProperties->wallCheckRadius,
-                                    player->ageProperties->ceilingCheckHeight, 0x3F);
+            // Copy Player_ProcessSceneCollision's EXACT crawl capsule
+            // settings: standing-height collision can pin P2 in tunnels.
+            Actor_UpdateBgCheckInfo(play, actor, 15.0f, 10.0f, 30.0f, 0x3F);
             bool exitWall = ShipCrewPlayer_ShouldLeaveCrawlspace(play, player, step);
             if (!exitWall && sPilot.crawlDistance > 22.0f) {
                 // Some hollow crawl holes have only a narrow interior
