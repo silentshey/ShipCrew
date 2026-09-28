@@ -536,6 +536,9 @@ static s32 sFloorType = 0;
 static f32 sWaterSpeedFactor = 1.0f;    // Set to 0.5f in water, 1.0f otherwise. Influences different speed values.
 static f32 sInvWaterSpeedFactor = 1.0f; // Inverse of `sWaterSpeedFactor` (1.0f / sWaterSpeedFactor)
 static u32 sTouchedWallFlags = 0;
+// Set only while P2 executes P1's native climb callbacks; scoped globals
+// are immediately restored after P2's action returns.
+static s32 sShipCrewPilotNativeClimb = false;
 static u32 sConveyorSpeed = 0;
 static s16 sIsFloorConveyor = false;
 static s16 sConveyorYaw = 0;
@@ -5591,6 +5594,11 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
         // bottom ascent and sent upper-platform dismount probes backward.
         const s16 towardWall = side > 0.0f ? (s16)(Math_Atan2S(nz, nx) + 0x8000) : Math_Atan2S(nz, nx);
         *outFacing = fromTop ? (s16)(towardWall + 0x8000) : towardWall;
+        // Native P1's follow-wall action requires an owned wall polygon,
+        // background id, and the yaw derived from that polygon's normal.
+        player->actor.wallPoly = wall;
+        player->actor.wallBgId = bgId;
+        player->actor.wallYaw = Math_Atan2S(nz, nx);
         *outTopY = fromTop ? pos.y : maxY;
         *outBottomY = fromTop ? minY : pos.y;
         // For segmented ladder polygons there may be a lower ground floor
@@ -7950,6 +7958,47 @@ s32 func_8083EC18(Player* this, PlayState* play, u32 wallFlags) {
     return false;
 }
 
+// P2 attachment uses the very same native P1 action callbacks and animation
+// movement. P1 retains the original environment and item put-away gates.
+void ShipCrewPlayer_BeginNativeClimb(PlayState* play, Player* player, const Vec3f* entry, s16 entryYaw, s32 fromTop,
+                                     s32 freeClimb) {
+    if (play == NULL || player == NULL || entry == NULL || player->ageProperties == NULL)
+        return;
+
+    // Pilot items are validated independently before starting this action.
+    // Avoid P1's global item/camera/cutscene put-away mechanism here.
+    // P2 has its own animation queue. Player_StartAnimMovement disables
+    // interpolation for the CURRENT queue; without this boundary a P2
+    // attachment can accidentally disable P1's animation in the same frame.
+    AnimationContext_SetNextQueue(play);
+    Input* previousInput = sControlInput;
+    sControlInput = &play->state.input[1];
+    Player_SetupAction(play, player, Player_Action_8084BF1C, 0);
+    player->stateFlags1 |= PLAYER_STATE1_CLIMBING_LADDER;
+    player->stateFlags1 &= ~PLAYER_STATE1_IN_WATER;
+    player->av1.actionVar1 = freeClimb ? 2 : 0;
+    player->av2.actionVar2 = fromTop ? -4 : -2;
+    player->actor.world.pos = *entry;
+    player->actor.shape.rot.y = player->yaw = entryYaw;
+    player->actor.world.rot.y = entryYaw;
+    player->actor.velocity.y = player->linearVelocity = player->actor.speedXZ = 0.0f;
+    player->actor.gravity = 0.0f;
+    func_80832224(player);
+    player->actor.prevPos = player->actor.world.pos;
+
+    LinkAnimationHeader* anim =
+        freeClimb ? ((player->actor.bgCheckFlags & BGCHECKFLAG_GROUND) ? &gPlayerAnim_link_normal_Fclimb_startA
+                                                                       : &gPlayerAnim_link_normal_Fclimb_hold2upL)
+                  : (fromTop ? player->ageProperties->unk_A8 : player->ageProperties->unk_A4);
+    Player_AnimPlayOnce(play, player, anim);
+    Player_StartAnimMovement(play, player, 0x9F);
+    // The initial attachment frame also queues root translation in P1.
+    // Skipping it offsets P2's camera and ladder position by one frame.
+    ShipCrewPlayer_QueueNativeAnimMovement(play, player);
+    AnimationContext_SetNextQueue(play);
+    sControlInput = previousInput;
+}
+
 void Player_SetupDismountLadder(Player* this, LinkAnimationHeader* anim, PlayState* play) {
     Player_SetupActionPreserveAnimMovement(play, this, Player_Action_DismountLadder, 0);
     LinkAnimation_PlayOnceSetSpeed(play, &this->skelAnime, anim, (4.0f / 3.0f));
@@ -7982,7 +8031,9 @@ s32 ShipCrewPlayer_QueryNativeVine(PlayState* play, Player* player, s16 approach
     if (!BgCheck_EntityLineTest1(&play->colCtx, &from, &to, &hit, &wall, true, false, false, true, &bgId) ||
         wall == NULL || !(SurfaceType_GetWallFlags(&play->colCtx, wall, bgId) & WALL_FLAG_CLIMBABLE))
         return false;
-    const s16 faceWall = Math_Atan2S(-COLPOLY_GET_NORMAL(wall->normal.x), -COLPOLY_GET_NORMAL(wall->normal.z));
+    // Exact normal ordering in P1's func_8083F360: (-normal.z, -normal.x).
+    // The old reversed pair made certain free-climb walls appear sideways.
+    const s16 faceWall = Math_Atan2S(-COLPOLY_GET_NORMAL(wall->normal.z), -COLPOLY_GET_NORMAL(wall->normal.x));
     if (ABS((s16)(faceWall - approachYaw)) > 0x3000)
         return false;
     Vec3f verts[3];
@@ -7997,7 +8048,17 @@ s32 ShipCrewPlayer_QueryNativeVine(PlayState* play, Player* player, s16 approach
     }
     if (*outTopY < actor->world.pos.y + 12.0f)
         return false;
+    const f32 nx = COLPOLY_GET_NORMAL(wall->normal.x);
+    const f32 ny = COLPOLY_GET_NORMAL(wall->normal.y);
+    const f32 nz = COLPOLY_GET_NORMAL(wall->normal.z);
+    const f32 distance = Math3D_UDistPlaneToPos(nx, ny, nz, wall->dist, &actor->world.pos);
     *outAnchor = actor->world.pos;
+    // P1's climbable-wall attachment: native radius minus wall distance.
+    outAnchor->x += (player->ageProperties->wallCheckRadius - 1.0f - distance) * nx;
+    outAnchor->z += (player->ageProperties->wallCheckRadius - 1.0f - distance) * nz;
+    actor->wallPoly = wall;
+    actor->wallBgId = bgId;
+    actor->wallYaw = Math_Atan2S(wall->normal.z, wall->normal.x);
     *outFacing = faceWall;
     return true;
 }
@@ -13694,7 +13755,11 @@ void Player_Action_DismountLadder(Player* this, PlayState* play) {
 
     this->stateFlags2 |= PLAYER_STATE2_DISABLE_ROTATION_ALWAYS;
 
-    interruptResult = Player_TryActionInterrupt(play, this, &this->skelAnime, 4.0f);
+    // P1's idle interrupt dispatcher uses primary-player item/UI state.
+    // P2 runs the same native dismount but defers its interrupt window until
+    // the action handlers and equipment are individually player-scoped.
+    interruptResult = sShipCrewPilotNativeClimb ? PLAYER_INTERRUPT_NONE
+                                                : Player_TryActionInterrupt(play, this, &this->skelAnime, 4.0f);
 
     // SoH: Prevent ladder cutscene softlock
     if (GameInteractor_Should(VB_INTERRUPT_LADDER_DISMOUNT, interruptResult == PLAYER_INTERRUPT_NEW_ACTION,
@@ -13725,6 +13790,56 @@ void Player_Action_DismountLadder(Player* this, PlayState* play) {
             Player_PlayLandingSfx(this);
         }
     }
+}
+
+// Drive P2 through P1's original actionFunc without redirecting GET_PLAYER,
+// camera, save data, or the primary player. Cached input/collision values are
+// restored before P1's next actor update, and only P2's root movement is queued.
+s32 ShipCrewPlayer_IsNativeClimbAction(Player* player) {
+    if (player == NULL)
+        return false;
+    return player->actionFunc == Player_Action_8084BF1C || player->actionFunc == Player_Action_DismountLadder ||
+           player->actionFunc == Player_Action_8084BDFC || player->actionFunc == Player_Action_8084BBE4;
+}
+
+void ShipCrewPlayer_CancelNativeClimbForPilot(PlayState* play, Player* player) {
+    if (play != NULL && ShipCrewPlayer_IsNativeClimbAction(player))
+        func_8083C0E8(player, play);
+}
+
+s32 ShipCrewPlayer_UpdateNativeClimbForPilot(PlayState* play, Player* player, Input* input) {
+    if (play == NULL || player == NULL || input == NULL || !ShipCrewPlayer_IsNativeClimbAction(player))
+        return false;
+
+    // Mirror the P1 action/queue boundary, including transitions that call
+    // Player_StartAnimMovement or the native dismount helper. This prevents
+    // another Link's queued interpolation from inheriting P2's disable flag.
+    AnimationContext_SetNextQueue(play);
+    Input* previousInput = sControlInput;
+    const u32 previousTouchedWallFlags = sTouchedWallFlags;
+    const f32 previousYDistToFloor = sYDistToFloor;
+    const s32 previousPilotClimb = sShipCrewPilotNativeClimb;
+
+    sControlInput = input;
+    sTouchedWallFlags = (player->actor.wallPoly == NULL)
+                            ? 0
+                            : SurfaceType_GetWallFlags(&play->colCtx, player->actor.wallPoly, player->actor.wallBgId);
+    sYDistToFloor = player->actor.world.pos.y - player->actor.floorHeight;
+    sShipCrewPilotNativeClimb = true;
+    // Vanilla clears transient per-action flags immediately before the native
+    // action; P2 does not execute the full primary Player_UpdateCommon.
+    player->stateFlags2 &= ~(PLAYER_STATE2_STATIONARY_LADDER | PLAYER_STATE2_DISABLE_ROTATION_ALWAYS);
+    player->actionFunc(player, play);
+
+    sShipCrewPilotNativeClimb = previousPilotClimb;
+    sTouchedWallFlags = previousTouchedWallFlags;
+    sYDistToFloor = previousYDistToFloor;
+    sControlInput = previousInput;
+
+    // P1 queues root movement after its actionFunc, not before.
+    ShipCrewPlayer_QueueNativeAnimMovement(play, player);
+    AnimationContext_SetNextQueue(play);
+    return true;
 }
 
 static AnimSfxEntry D_808548B4[] = {
