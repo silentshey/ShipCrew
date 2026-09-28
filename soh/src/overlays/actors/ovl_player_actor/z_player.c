@@ -13899,8 +13899,8 @@ void ShipCrewPlayer_BeginNativeCrawl(PlayState* play, Player* player, const Vec3
     CollisionPoly* wall = player->actor.wallPoly;
     const f32 nx = COLPOLY_GET_NORMAL(wall->normal.x);
     const f32 nz = COLPOLY_GET_NORMAL(wall->normal.z);
-    const f32 dist = player->distToInteractWall > 0.0f ? player->distToInteractWall
-                                                       : player->ageProperties->wallCheckRadius - 1.0f;
+    const f32 dist =
+        player->distToInteractWall > 0.0f ? player->distToInteractWall : player->ageProperties->wallCheckRadius - 1.0f;
 
     AnimationContext_SetNextQueue(play);
     player->stateFlags2 |= PLAYER_STATE2_CRAWLING;
@@ -15823,8 +15823,7 @@ s32 ShipCrewPlayer_EquipPilotSword(PlayState* play, Player* player, s32 swordIte
         return false;
 
     action = Player_ItemToItemAction(swordItem);
-    if (Player_ActionToMeleeWeapon(action) == 0 || action == PLAYER_IA_HAMMER ||
-        action == PLAYER_IA_DEKU_STICK)
+    if (Player_ActionToMeleeWeapon(action) == 0 || action == PLAYER_IA_HAMMER || action == PLAYER_IA_DEKU_STICK)
         return false;
 
     if (player->heldItemAction != action || player->heldItemId != swordItem) {

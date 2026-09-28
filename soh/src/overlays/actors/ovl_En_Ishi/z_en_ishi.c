@@ -386,8 +386,7 @@ void EnIshi_Wait(EnIshi* this, PlayState* play) {
         Collider_UpdateCylinder(&this->actor, &this->collider);
         this->collider.base.acFlags &= ~AC_HIT;
         CollisionCheck_SetAC(play, &play->colChkCtx, &this->collider.base);
-        if ((this->actor.xzDistToPlayer < 400.0f) ||
-            ShipCrewActor_IsSecondPlayerWithinXZ(play, &this->actor, 400.0f)) {
+        if ((this->actor.xzDistToPlayer < 400.0f) || ShipCrewActor_IsSecondPlayerWithinXZ(play, &this->actor, 400.0f)) {
             CollisionCheck_SetOC(play, &play->colChkCtx, &this->collider.base);
             if (this->actor.xzDistToPlayer < 90.0f) {
                 // GI_NONE in these cases allows the player to lift the actor

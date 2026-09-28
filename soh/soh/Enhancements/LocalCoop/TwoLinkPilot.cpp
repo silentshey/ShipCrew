@@ -1106,8 +1106,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     // First sword/shield integration follows P1's existing saved B sword
     // and equipped shield. Item acquisition and ammunition stay shared;
     // these actions only change P2's own model and native action state.
-    const bool nativeCombat = CVarGetInteger(SHIPCREW_NATIVE_COMBAT_CVAR, 0) != 0 &&
-                              CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0;
+    const bool nativeCombat =
+        CVarGetInteger(SHIPCREW_NATIVE_COMBAT_CVAR, 0) != 0 && CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0;
     player->currentShield = GET_PLAYER(play)->currentShield;
     player->currentTunic = GET_PLAYER(play)->currentTunic;
     player->currentBoots = GET_PLAYER(play)->currentBoots;
@@ -1131,9 +1131,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             ShipCrewPlayer_EndPilotSword(play, player);
             sPilot.nativeSwordActive = false;
         } else {
-            ShipCrewPlayer_UpdatePilotCombatStick(
-                player, Math_Atan2S(pad.stick_x, pad.stick_y),
-                Math_Atan2S(worldX, worldZ), std::min(80.0f, inputLength * 80.0f));
+            ShipCrewPlayer_UpdatePilotCombatStick(player, Math_Atan2S(pad.stick_x, pad.stick_y),
+                                                  Math_Atan2S(worldX, worldZ), std::min(80.0f, inputLength * 80.0f));
             ShipCrewPlayer_ResetNativeGravity(player);
             actor->speedXZ = std::max(0.0f, player->linearVelocity);
             actor->world.rot.y = player->yaw;
@@ -1169,16 +1168,15 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     // The original action button releases a carried bomb first. Otherwise A
     // rolls while running; there is no manual A-button jump.
     // Prevent combat from stealing a ladder, crawlspace or carried prop.
-    const bool combatFree = canAct && nativeCombat && wasGrounded && heldBomb == nullptr &&
-                            carriedProp == nullptr && sPilot.pickupCandidate == nullptr &&
-                            sPilot.crawl == PilotCrawl::None && sPilot.ladder == PilotLadder::None &&
-                            sPilot.traversal == PilotTraversal::None && sPilot.dodge == PilotDodge::None &&
-                            sPilot.rollFrames == 0 && sPilot.itemFrames == 0;
+    const bool combatFree = canAct && nativeCombat && wasGrounded && heldBomb == nullptr && carriedProp == nullptr &&
+                            sPilot.pickupCandidate == nullptr && sPilot.crawl == PilotCrawl::None &&
+                            sPilot.ladder == PilotLadder::None && sPilot.traversal == PilotTraversal::None &&
+                            sPilot.dodge == PilotDodge::None && sPilot.rollFrames == 0 && sPilot.itemFrames == 0;
     if (nativeCombat && combatFree && ShipCrewPlayer_PilotSwordItem() != ITEM_NONE) {
         ShipCrewPlayer_EquipPilotSword(play, player, ShipCrewPlayer_PilotSwordItem());
         // Preserve P1's directional-combat inputs for its native selection.
         ShipCrewPlayer_UpdatePilotCombatStick(player, Math_Atan2S(pad.stick_x, pad.stick_y),
-                                               Math_Atan2S(worldX, worldZ), std::min(80.0f, inputLength * 80.0f));
+                                              Math_Atan2S(worldX, worldZ), std::min(80.0f, inputLength * 80.0f));
     }
 
     const bool defend = combatFree && (buttons & BTN_R) && player->currentShield != PLAYER_SHIELD_NONE;
@@ -1191,12 +1189,11 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     if (sPilot.nativeShielding)
         moving = false;
 
-    if (combatFree && !sPilot.nativeShielding && (pressed & BTN_B) &&
-        ShipCrewPlayer_PilotSwordItem() != ITEM_NONE &&
+    if (combatFree && !sPilot.nativeShielding && (pressed & BTN_B) && ShipCrewPlayer_PilotSwordItem() != ITEM_NONE &&
         ShipCrewPlayer_BeginPilotSwordAttack(play, player, &play->state.input[1], pressed)) {
         sPilot.nativeSwordActive = true;
-        SPDLOG_INFO("[ShipCrew] P2 native P1 sword action begun (animation={}, model={})",
-                    player->meleeWeaponAnimation, player->modelGroup);
+        SPDLOG_INFO("[ShipCrew] P2 native P1 sword action begun (animation={}, model={})", player->meleeWeaponAnimation,
+                    player->modelGroup);
         ShipCrewPlayer_ResetPilotCombatCollision(play, player);
         Actor_SetFocus(actor, 40.0f);
         return;
@@ -1227,11 +1224,10 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         return;
     }
     if (nativeTraversal && canAct && wasGrounded && heldBomb == nullptr && carriedProp == nullptr &&
-        sPilot.ladder == PilotLadder::None && sPilot.traversal == PilotTraversal::None &&
-        sPilot.rollFrames == 0 && sPilot.itemFrames == 0 &&
-        ShipCrewPlayer_TryNativeLedgeForPilot(play, player, &play->state.input[1])) {
-        SPDLOG_INFO("[ShipCrew] P2 native P1 ledge/fence action started type={} rise={}",
-                    player->ledgeClimbType, player->yDistToLedge);
+        sPilot.ladder == PilotLadder::None && sPilot.traversal == PilotTraversal::None && sPilot.rollFrames == 0 &&
+        sPilot.itemFrames == 0 && ShipCrewPlayer_TryNativeLedgeForPilot(play, player, &play->state.input[1])) {
+        SPDLOG_INFO("[ShipCrew] P2 native P1 ledge/fence action started type={} rise={}", player->ledgeClimbType,
+                    player->yDistToLedge);
         Actor_SetFocus(actor, 40.0f);
         return;
     }
