@@ -29,6 +29,9 @@ extern MessageTableEntry* sGerMessageEntryTablePtr;
 extern MessageTableEntry* sFraMessageEntryTablePtr;
 extern MessageTableEntry* sJpnMessageEntryTablePtr;
 
+// Needed by the native C-button drawing path defined earlier in this file.
+s32 ShipCrewCamera_IsSplitOverlayActive(PlayState* play);
+
 #define DO_ACTION_TEX_WIDTH() 48
 #define DO_ACTION_TEX_HEIGHT() 16
 #define DO_ACTION_TEX_SIZE() ((DO_ACTION_TEX_WIDTH() * DO_ACTION_TEX_HEIGHT()) / 2)
@@ -5106,7 +5109,6 @@ const char* digitTextures[] = { gCounterDigit0Tex, gCounterDigit1Tex, gCounterDi
 
 // ShipCrew retains separate native targeting contexts per local viewport.
 void ShipCrewAttention_DrawSplit(PlayState* play);
-s32 ShipCrewCamera_IsSplitOverlayActive(PlayState* play);
 
 // Three compact C slots per viewport; the original P1 equipment is shown in
 // the left half. P2 currently has independent hardwired bomb/nut input and a
@@ -5119,10 +5121,9 @@ static void ShipCrew_DrawCSlot(PlayState* play, s16 x, s16 y, s16 item, s16 alph
     gDPSetEnvColor(OVERLAY_DISP++, 0, 0, 0, 255);
     OVERLAY_DISP = Gfx_TextureIA8(OVERLAY_DISP, gButtonBackgroundTex, 32, 32, x, y, 19, 19,
                                    (32 << 10) / 19, (32 << 10) / 19);
-    if (item < 0 || item >= 0xF0) {
-        CLOSE_DISPS(play->state.gfxCtx);
-        return;
-    }
+    // OPEN_DISPS/CLOSE_DISPS must be paired exactly once: these macros
+    // establish a lexical display-list scope, so no early close/return.
+    if (item >= 0 && item < 0xF0) {
     gDPPipeSync(OVERLAY_DISP++);
     gDPSetPrimColor(OVERLAY_DISP++, 0, 0, 255, 255, 255, alpha);
     gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATERGBA_PRIM, G_CC_MODULATERGBA_PRIM);
@@ -5145,6 +5146,7 @@ static void ShipCrew_DrawCSlot(PlayState* play, s16 x, s16 y, s16 item, s16 alph
                                            x + 7, y + 14, 8, 8, 1 << 10, 1 << 10);
         OVERLAY_DISP = Gfx_TextureIA8(OVERLAY_DISP, (u8*)_gAmmoDigit0Tex[count % 10], 8, 8,
                                        x + 13, y + 14, 8, 8, 1 << 10, 1 << 10);
+    }
     }
     CLOSE_DISPS(play->state.gfxCtx);
 }
