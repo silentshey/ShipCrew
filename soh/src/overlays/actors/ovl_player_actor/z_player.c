@@ -1934,6 +1934,28 @@ void Player_FinishAnimMovement(Player* this) {
  * When using the AnimTask variant, age specific scaling can only be applied visually
  * to the root bone position and does not affect world position.
  */
+// Shared native movement primitives. Both player instances pass their own
+// skeleton, actor and age properties; neither helper uses sControlInput or
+// GET_PLAYER. Ordinary P1 retains its existing queued actor-root movement.
+LinkAnimationHeader* ShipCrewPlayer_SelectNativeLadderRung(Player* player, s32 phase, s32 direction) {
+    const s32 slot = (phase & 1) ^ (direction < 0 ? 1 : 0);
+    player->skelAnime.prevTransl = direction < 0 ? player->ageProperties->unk_62[slot]
+                                                : player->ageProperties->unk_4A[slot];
+    player->skelAnime.prevRot = player->actor.shape.rot.y;
+    return player->ageProperties->unk_AC[slot];
+}
+
+void ShipCrewPlayer_QueueNativeAnimMovement(PlayState* play, Player* player) {
+    if (player->ageProperties != NULL && (player->skelAnime.movementFlags & 8)) {
+        // Exactly the native P1 queue: frame loading and interpolation must
+        // finish BEFORE actor root movement. Reading jointTable during P2's
+        // actor update (the previous pilot approach) reads the OLD frame.
+        AnimationContext_SetMoveActor(play, &player->actor, &player->skelAnime,
+                                      (player->skelAnime.movementFlags & 4) ? 1.0f
+                                                                            : player->ageProperties->unk_08);
+    }
+}
+
 void Player_ApplyAnimMovementScaledByAge(Player* this, s32 movementFlags) {
     Vec3f diff;
 
@@ -12382,10 +12404,7 @@ void Player_UpdateCommon(Player* this, PlayState* play, Input* input) {
 
         Player_UpdateCamAndSeqModes(play, this);
 
-        if (this->skelAnime.movementFlags & 8) {
-            AnimationContext_SetMoveActor(play, &this->actor, &this->skelAnime,
-                                          (this->skelAnime.movementFlags & 4) ? 1.0f : this->ageProperties->unk_08);
-        }
+        ShipCrewPlayer_QueueNativeAnimMovement(play, this);
 
         Player_UpdateShapeYaw(this, play);
 
@@ -13508,8 +13527,7 @@ void Player_Action_8084BF1C(Player* this, PlayState* play) {
                             Player_SetupDismountLadder(this, this->ageProperties->unk_CC[this->av2.actionVar2], play);
                         }
                     } else {
-                        this->skelAnime.prevTransl = this->ageProperties->unk_4A[sp68];
-                        Player_AnimPlayOnce(play, this, this->ageProperties->unk_AC[sp68]);
+                        Player_AnimPlayOnce(play, this, ShipCrewPlayer_SelectNativeLadderRung(this, sp68, 1));
                     }
                 } else {
                     if ((this->actor.world.pos.y - this->actor.floorHeight) < 15.0f) {
@@ -13523,9 +13541,7 @@ void Player_Action_8084BF1C(Player* this, PlayState* play) {
                             this->av2.actionVar2 = 1;
                         }
                     } else {
-                        sp68 ^= 1;
-                        this->skelAnime.prevTransl = this->ageProperties->unk_62[sp68];
-                        anim1 = this->ageProperties->unk_AC[sp68];
+                        anim1 = ShipCrewPlayer_SelectNativeLadderRung(this, sp68, -1);
                         LinkAnimation_Change(play, &this->skelAnime, anim1, -1.0f, Animation_GetLastFrame(anim1), 0.0f,
                                              ANIMMODE_ONCE, 0.0f);
                     }
