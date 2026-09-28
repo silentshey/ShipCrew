@@ -5383,8 +5383,7 @@ s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* outRise, Vec
     // collision test succeeds. P2 used to probe arbitrary low rails/fences
     // from a distance, causing inappropriate auto-mantles.
     if ((actor->bgCheckFlags & BGCHECKFLAG_GROUND) &&
-        (!(actor->bgCheckFlags & BGCHECKFLAG_WALL) ||
-         !(actor->bgCheckFlags & BGCHECKFLAG_PLAYER_WALL_INTERACT)))
+        (!(actor->bgCheckFlags & BGCHECKFLAG_WALL) || !(actor->bgCheckFlags & BGCHECKFLAG_PLAYER_WALL_INTERACT)))
         return PLAYER_LEDGE_CLIMB_NONE;
     if (player->stateFlags1 & (PLAYER_STATE1_CARRYING_ACTOR | PLAYER_STATE1_IN_WATER | PLAYER_STATE1_IN_CUTSCENE)) {
         return PLAYER_LEDGE_CLIMB_NONE;
@@ -8224,8 +8223,8 @@ s32 func_8083F524(PlayState* play, Player* this) {
 // Player object. Unlike the original P1 cached sTouchedWallFlags, this uses
 // the wall assigned by THAT player's own collision pass.
 s32 ShipCrewPlayer_ShouldLeaveCrawlspace(PlayState* play, Player* player, f32 speed) {
-    if (play == NULL || player == NULL || speed == 0.0f ||
-        !(player->actor.bgCheckFlags & BGCHECKFLAG_WALL) || player->actor.wallPoly == NULL ||
+    if (play == NULL || player == NULL || speed == 0.0f || !(player->actor.bgCheckFlags & BGCHECKFLAG_WALL) ||
+        player->actor.wallPoly == NULL ||
         !(SurfaceType_GetWallFlags(&play->colCtx, player->actor.wallPoly, player->actor.wallBgId) &
           WALL_FLAG_CRAWLSPACE))
         return false;
@@ -10661,7 +10660,7 @@ void Player_Action_80845668(Player* this, PlayState* play) {
         // The vanilla interrupt dispatcher can process global P1 item/UI
         // state; keep it disabled only for the isolated P2 invocation.
         temp2 = sShipCrewPilotNativeLedge ? PLAYER_INTERRUPT_NONE
-                                           : Player_TryActionInterrupt(play, this, &this->skelAnime, 4.0f);
+                                          : Player_TryActionInterrupt(play, this, &this->skelAnime, 4.0f);
 
         if (temp2 == 0) {
             this->stateFlags1 &= ~(PLAYER_STATE1_CLIMBING_LEDGE | PLAYER_STATE1_JUMPING);
@@ -11660,9 +11659,8 @@ s32 Player_UpdateHoverBoots(Player* this) {
 // P1's original scene-exit transaction when both local players have reached
 // the same nearby area. Do not hijack P1's camera across the entire map.
 s32 ShipCrewPlayer_TryPilotSharedSceneExit(PlayState* play, Player* p2) {
-    if (play == NULL || p2 == NULL || p2->actor.floorPoly == NULL ||
-        p2->actor.floorBgId != BGCHECK_SCENE || play->transitionTrigger != TRANS_TRIGGER_OFF ||
-        !(p2->actor.bgCheckFlags & BGCHECKFLAG_GROUND) ||
+    if (play == NULL || p2 == NULL || p2->actor.floorPoly == NULL || p2->actor.floorBgId != BGCHECK_SCENE ||
+        play->transitionTrigger != TRANS_TRIGGER_OFF || !(p2->actor.bgCheckFlags & BGCHECKFLAG_GROUND) ||
         SurfaceType_GetSceneExitIndex(&play->colCtx, p2->actor.floorPoly, p2->actor.floorBgId) == 0)
         return false;
     Player* p1 = GET_PLAYER(play);
@@ -13853,8 +13851,8 @@ void Player_Action_DismountLadder(Player* this, PlayState* play) {
 // draw-offset compensation. The previous P2 controller moved its entire
 // actor through the wall while also playing a root-animated clip, causing
 // fence clipping and a second camera translation at dismount.
-s32 ShipCrewPlayer_BeginNativeLedgeStep(PlayState* play, Player* player, const Vec3f* stand, s16 face,
-                                       f32 rise, s32 ledgeType) {
+s32 ShipCrewPlayer_BeginNativeLedgeStep(PlayState* play, Player* player, const Vec3f* stand, s16 face, f32 rise,
+                                        s32 ledgeType) {
     if (play == NULL || player == NULL || player->ageProperties == NULL || stand == NULL ||
         (ledgeType != PLAYER_LEDGE_CLIMB_2 && ledgeType != PLAYER_LEDGE_CLIMB_3))
         return false;
@@ -13874,9 +13872,8 @@ s32 ShipCrewPlayer_BeginNativeLedgeStep(PlayState* play, Player* player, const V
     func_80832224(player);
     player->actor.prevPos = player->actor.world.pos;
     player->actor.bgCheckFlags |= BGCHECKFLAG_GROUND;
-    LinkAnimationHeader* anim = ledgeType == PLAYER_LEDGE_CLIMB_3
-                                    ? &gPlayerAnim_link_normal_150step_up
-                                    : &gPlayerAnim_link_normal_100step_up;
+    LinkAnimationHeader* anim =
+        ledgeType == PLAYER_LEDGE_CLIMB_3 ? &gPlayerAnim_link_normal_150step_up : &gPlayerAnim_link_normal_100step_up;
     LinkAnimation_PlayOnceSetSpeed(play, &player->skelAnime, anim, 1.3f);
     AnimationContext_DisableQueue(play);
     AnimationContext_SetNextQueue(play);

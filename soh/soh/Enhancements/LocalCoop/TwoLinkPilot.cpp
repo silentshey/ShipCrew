@@ -51,8 +51,8 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
 s32 ShipCrewPlayer_QueryCrawlspace(PlayState* play, Player* player, Vec3f* center);
 s32 ShipCrewPlayer_ShouldLeaveCrawlspace(PlayState* play, Player* player, f32 crawlSpeed);
 s32 ShipCrewPlayer_TryPilotSharedSceneExit(PlayState* play, Player* p2);
-s32 ShipCrewPlayer_BeginNativeLedgeStep(PlayState* play, Player* player, const Vec3f* stand, s16 face,
-                                       f32 rise, s32 ledgeType);
+s32 ShipCrewPlayer_BeginNativeLedgeStep(PlayState* play, Player* player, const Vec3f* stand, s16 face, f32 rise,
+                                        s32 ledgeType);
 s32 ShipCrewPlayer_TickNativeLedgeForPilot(PlayState* play, Player* player, Input* input);
 void ShipCrewPlayer_CancelNativeLedgeForPilot(PlayState* play, Player* player);
 s32 ShipCrewPlayer_QueryNativeVine(PlayState* play, Player* player, s16 approachYaw, Vec3f* anchor, s16* facing,
@@ -243,8 +243,8 @@ void Pilot_BeginClimb(Player* player, PlayState* play, s32 type, bool fromHang) 
     // Player_Action_80845668. Hanging and high jumps remain isolated pilot
     // actions until their additional native cutscene transitions are scoped.
     if (!fromHang && (type == PLAYER_LEDGE_CLIMB_2 || type == PLAYER_LEDGE_CLIMB_3) &&
-        ShipCrewPlayer_BeginNativeLedgeStep(play, player, &sPilot.ledgeStand, sPilot.ledgeFacing,
-                                           sPilot.ledgeRise, type)) {
+        ShipCrewPlayer_BeginNativeLedgeStep(play, player, &sPilot.ledgeStand, sPilot.ledgeFacing, sPilot.ledgeRise,
+                                            type)) {
         sPilot.nativeLedgeStep = true;
         sPilot.traversal = PilotTraversal::Climbing;
         sPilot.ledgeCooldownFrames = 18;
@@ -870,10 +870,8 @@ bool Pilot_UpdateCrawl(Player* player, PlayState* play, const OSContPad& pad) {
                 Vec3f hit = {};
                 CollisionPoly* wall = nullptr;
                 s32 bgId = BGCHECK_SCENE;
-                if (BgCheck_EntityLineTest1(&play->colCtx, &from, &to, &hit, &wall, true, false, false, true,
-                                             &bgId) &&
-                    wall != nullptr &&
-                    (SurfaceType_GetWallFlags(&play->colCtx, wall, bgId) & WALL_FLAG_CRAWLSPACE)) {
+                if (BgCheck_EntityLineTest1(&play->colCtx, &from, &to, &hit, &wall, true, false, false, true, &bgId) &&
+                    wall != nullptr && (SurfaceType_GetWallFlags(&play->colCtx, wall, bgId) & WALL_FLAG_CRAWLSPACE)) {
                     // Apply P1's exact surface and signed facing test to the
                     // P2 candidate instead of interpreting every nearby
                     // tagged wall as a tunnel exit.
@@ -907,8 +905,8 @@ bool Pilot_UpdateCrawl(Player* player, PlayState* play, const OSContPad& pad) {
                 AnimationContext_SetNextQueue(play);
                 player->skelAnime.movementFlags = 0x9D;
                 LinkAnimation_Change(play, &player->skelAnime, anim, sPilot.crawlExitForward ? 1.0f : -1.0f,
-                                     sPilot.crawlExitForward ? 0.0f : last,
-                                     sPilot.crawlExitForward ? last : 0.0f, ANIMMODE_ONCE, 0.0f);
+                                     sPilot.crawlExitForward ? 0.0f : last, sPilot.crawlExitForward ? last : 0.0f,
+                                     ANIMMODE_ONCE, 0.0f);
                 AnimationContext_SetNextQueue(play);
                 SPDLOG_INFO("[ShipCrew] P2 native crawl exit: forward={} wallYaw={} travelled={}",
                             sPilot.crawlExitForward, actor->wallYaw, sPilot.crawlDistance);
@@ -918,7 +916,6 @@ bool Pilot_UpdateCrawl(Player* player, PlayState* play, const OSContPad& pad) {
     Actor_SetFocus(actor, 25.0f);
     return true;
 }
-
 
 void Pilot_ConsumeOneSharedAmmo(s16 item, s16 countBeforeSpawn) {
     const s16 expected = countBeforeSpawn - 1;
@@ -1874,8 +1871,8 @@ static RegisterShipInitFunc sRegisterPilot(Pilot_RegisterHooks);
 // presentation without allocating a global one-point cutscene that would
 // steal P1's main camera and block independent movement.
 extern "C" s32 ShipCrewPilot_GetCrawlExitCamera(PlayState* play, s32* forward, f32* progress) {
-    if (play == nullptr || forward == nullptr || progress == nullptr ||
-        sPilot.crawl != PilotCrawl::Exit || FindPilotActor(play) != sPilot.actor)
+    if (play == nullptr || forward == nullptr || progress == nullptr || sPilot.crawl != PilotCrawl::Exit ||
+        FindPilotActor(play) != sPilot.actor)
         return false;
     Player* p2 = reinterpret_cast<Player*>(sPilot.actor);
     const f32 last = Animation_GetLastFrame(p2->skelAnime.animation);
@@ -1903,13 +1900,11 @@ extern "C" Actor* ShipCrewCamera_GetSecondTarget(PlayState* play) {
 // rendering or the secondary camera being initialized.
 extern "C" Player* ShipCrewPilot_GetInteractionPlayer(PlayState* play) {
     if (play == nullptr || CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0 ||
-        CVarGetInteger(CVAR_ENHANCEMENT("IvanCoopModeEnabled"), 0) != 0 ||
-        GET_PLAYER(play) == nullptr)
+        CVarGetInteger(CVAR_ENHANCEMENT("IvanCoopModeEnabled"), 0) != 0 || GET_PLAYER(play) == nullptr)
         return nullptr;
     Actor* pilot = FindPilotActor(play);
-    return pilot != nullptr && pilot == sPilot.actor && pilot->update != nullptr
-               ? reinterpret_cast<Player*>(pilot)
-               : nullptr;
+    return pilot != nullptr && pilot == sPilot.actor && pilot->update != nullptr ? reinterpret_cast<Player*>(pilot)
+                                                                                 : nullptr;
 }
 
 extern "C" Player* ShipCrewCamera_GetNativeSecondPlayer(PlayState* play) {

@@ -27,8 +27,9 @@ void ObjTsubo_SetupWaitForObject(ObjTsubo* this);
 void ObjTsubo_WaitForObject(ObjTsubo* this, PlayState* play);
 void ObjTsubo_SetupIdle(ObjTsubo* this);
 
-    extern f32 ShipCrewActor_GetClosestLocalPlayerXZDist(PlayState* play, Actor* actor);
-    const f32 nearestLocalPlayer = ShipCrewActor_GetClosestLocalPlayerXZDist(play, &this->actor);void ObjTsubo_Idle(ObjTsubo* this, PlayState* play);
+extern f32 ShipCrewActor_GetClosestLocalPlayerXZDist(PlayState* play, Actor* actor);
+const f32 nearestLocalPlayer = ShipCrewActor_GetClosestLocalPlayerXZDist(play, &this->actor);
+void ObjTsubo_Idle(ObjTsubo* this, PlayState* play);
 void ObjTsubo_SetupLiftedUp(ObjTsubo* this);
 void ObjTsubo_LiftedUp(ObjTsubo* this, PlayState* play);
 void ObjTsubo_SetupThrown(ObjTsubo* this);

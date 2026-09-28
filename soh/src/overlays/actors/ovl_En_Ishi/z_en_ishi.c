@@ -364,7 +364,7 @@ void EnIshi_Wait(EnIshi* this, PlayState* play) {
     static u16 liftSounds[] = { NA_SE_PL_PULL_UP_ROCK, NA_SE_PL_PULL_UP_BIGROCK };
     s32 pad;
     s16 type = this->actor.params & 1;
-    extern f32 ShipCrewActor_GetClosestLocalPlayerXZDist(PlayState* play, Actor* actor);
+    extern f32 ShipCrewActor_GetClosestLocalPlayerXZDist(PlayState * play, Actor * actor);
     const f32 nearestLocalPlayer = ShipCrewActor_GetClosestLocalPlayerXZDist(play, &this->actor);
 
     if (Actor_HasParent(&this->actor, play)) {
