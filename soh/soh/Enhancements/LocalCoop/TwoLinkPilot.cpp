@@ -579,6 +579,7 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, f32 worldX, f32 worldZ,
             // Match P1: alternate age-specific left/right rung assets,
             // selecting the opposite phase when descending.
             LinkAnimationHeader* anim = ShipCrewPlayer_SelectNativeLadderRung(player, sPilot.ladderStep, requested);
+            player->skelAnime.prevRot = actor->shape.rot.y;
             const f32 last = static_cast<f32>(Animation_GetLastFrame(anim));
             sPilot.ladderDirection = requested;
             sPilot.ladderCycleSpeed = std::clamp(std::fabs(along) * 4.0f, 1.0f, 3.35f) +
