@@ -1938,10 +1938,11 @@ void Player_FinishAnimMovement(Player* this) {
 // skeleton, actor and age properties; neither helper uses sControlInput or
 // GET_PLAYER. Ordinary P1 retains its existing queued actor-root movement.
 LinkAnimationHeader* ShipCrewPlayer_SelectNativeLadderRung(Player* player, s32 phase, s32 direction) {
-    const s32 slot = (phase & 1) ^ (direction < 0 ? 1 : 0);
+    // P1's av1 may be nonzero for free-climb walls; retain all four
+    // original age-specific clip slots. Only ladder-only P2 uses 0/1.
+    const s32 slot = direction < 0 ? (phase ^ 1) : phase;
     player->skelAnime.prevTransl = direction < 0 ? player->ageProperties->unk_62[slot]
                                                 : player->ageProperties->unk_4A[slot];
-    player->skelAnime.prevRot = player->actor.shape.rot.y;
     return player->ageProperties->unk_AC[slot];
 }
 
