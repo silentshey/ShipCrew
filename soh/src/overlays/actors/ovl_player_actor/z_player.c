@@ -8209,6 +8209,21 @@ s32 func_8083F524(PlayState* play, Player* this) {
  * back entrance walls. When player interacts with either of these two interior exit walls, start the leaving-crawlspace
  * cutscene and return true. Else, return false
  */
+// Exact P1 interior crawl-exit wall/direction test, exposed for a second
+// Player object. Unlike the original P1 cached sTouchedWallFlags, this uses
+// the wall assigned by THAT player's own collision pass.
+s32 ShipCrewPlayer_ShouldLeaveCrawlspace(PlayState* play, Player* player, f32 speed) {
+    if (play == NULL || player == NULL || speed == 0.0f ||
+        !(player->actor.bgCheckFlags & BGCHECKFLAG_WALL) || player->actor.wallPoly == NULL ||
+        !(SurfaceType_GetWallFlags(&play->colCtx, player->actor.wallPoly, player->actor.wallBgId) &
+          WALL_FLAG_CRAWLSPACE))
+        return false;
+    s16 yawToWall = player->actor.shape.rot.y - player->actor.wallYaw;
+    if (speed < 0.0f)
+        yawToWall += 0x8000;
+    return ABS(yawToWall) > 0x4000;
+}
+
 s32 Player_TryLeavingCrawlspace(Player* this, PlayState* play) {
     s16 yawToWall;
 
