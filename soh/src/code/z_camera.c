@@ -7870,11 +7870,19 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
                 p2Camera.target = target;
                 Camera_RequestModeImpl(&p2Camera, CAM_MODE_BATTLE, true);
             }
+        } else if (player->stateFlags1 & (PLAYER_STATE1_HANGING_OFF_LEDGE | PLAYER_STATE1_CLIMBING_LEDGE)) {
+            // P1 requests HANG from the SAME flag pair in
+            // Player_UpdateCommon. P2's private camera previously remained
+            // in NORMAL during its ledge action and snapped on the climb.
+            p2Camera.target = NULL;
+            if (p2Camera.mode != CAM_MODE_HANG)
+                Camera_RequestModeImpl(&p2Camera, CAM_MODE_HANG, true);
         } else if (ShipCrewCamera_GetSecondParallel(play)) {
             p2Camera.target = NULL;
             if (p2Camera.mode != CAM_MODE_TARGET)
                 Camera_RequestModeImpl(&p2Camera, CAM_MODE_TARGET, true);
-        } else if (p2Camera.target != NULL || p2Camera.mode == CAM_MODE_BATTLE || p2Camera.mode == CAM_MODE_TARGET) {
+        } else if (p2Camera.target != NULL || p2Camera.mode == CAM_MODE_BATTLE ||
+                   p2Camera.mode == CAM_MODE_TARGET || p2Camera.mode == CAM_MODE_HANG) {
             p2Camera.target = NULL;
             Camera_RequestModeImpl(&p2Camera, CAM_MODE_NORMAL, true);
         }
