@@ -122,6 +122,9 @@ struct PilotRuntime {
     bool ladderBoundaryPending = false;
     int ladderCompletedDirection = 0;
     int ladderCooldown = 0;
+    int ladderExitGraceFrames = 0;
+    bool ladderDismountAtTop = false;
+    Vec3f ladderExitPosition = {};
     Vec3f ladderAnchor = {};
     Vec3f ladderEntryStart = {};
     Vec3f ladderEntryGoal = {};
@@ -412,6 +415,28 @@ void Pilot_BeginLadder(Player* player, PlayState* play, bool fromTop, const Vec3
                          -3.0f);
 }
 
+// A center floor hit at the ladder lip is not enough if most of P2's
+// collision cylinder remains outside the platform.
+bool Pilot_HasLandingSupport(PlayState* play, Player* player, const Vec3f& landing, bool fullFootprint) {
+    if (player->ageProperties == nullptr)
+        return false;
+    const f32 radius = std::max(4.0f, player->ageProperties->wallCheckRadius * 0.6f);
+    const f32 offsets[5][2] = {
+        { 0.0f, 0.0f }, { radius, 0.0f }, { -radius, 0.0f }, { 0.0f, radius }, { 0.0f, -radius }
+    };
+    for (s32 i = 0; i < (fullFootprint ? 5 : 1); ++i) {
+        Vec3f probe = landing;
+        probe.x += offsets[i][0];
+        probe.z += offsets[i][1];
+        probe.y += 24.0f;
+        CollisionPoly* floor = nullptr;
+        const f32 floorY = BgCheck_EntityRaycastFloor1(&play->colCtx, &floor, &probe);
+        if (floor == nullptr || floor->normal.y <= 28000 || std::fabs(floorY - landing.y) > 10.0f)
+            return false;
+    }
+    return true;
+}
+
 void Pilot_LadderDismount(Player* player, PlayState* play, bool atTop, const Vec3f& landing) {
     Actor* actor = &player->actor;
     // The original P2 implementation snapped immediately to the
@@ -419,6 +444,7 @@ void Pilot_LadderDismount(Player* player, PlayState* play, bool atTop, const Vec
     // camera snapped with it. Move to the verified floor during the clip.
     sPilot.ladderDismountStart = actor->world.pos;
     sPilot.ladderDismountGoal = landing;
+    sPilot.ladderDismountAtTop = atTop;
     actor->prevPos = actor->world.pos;
     actor->velocity.y = actor->speedXZ = player->linearVelocity = 0.0f;
     actor->gravity = 0.0f;
@@ -472,7 +498,9 @@ void Pilot_CheckNativeLadderBoundary(Player* player, PlayState* play, s32 direct
         // leaving a bottom-entry climb permanently stuck at its top.
         Vec3f landing = {};
         bool foundTop = false;
-        for (const f32 extra : { 13.0f, 27.0f, 40.0f }) {
+        // Prefer a floor point safely inside the platform over a hit on
+        // the lip whose center alone is technically supported.
+        for (const f32 extra : { 40.0f, 27.0f, 13.0f }) {
             Vec3f upperProbe = actor->world.pos;
             upperProbe.x += dirX * (player->ageProperties->wallCheckRadius + extra);
             upperProbe.z += dirZ * (player->ageProperties->wallCheckRadius + extra);
@@ -482,10 +510,13 @@ void Pilot_CheckNativeLadderBoundary(Player* player, PlayState* play, s32 direct
             if (upperFloor != nullptr &&
                 actor->world.pos.y >= upperY - std::max(15.0f, 22.0f * player->ageProperties->unk_08) &&
                 actor->world.pos.y <= upperY + 25.0f && upperY >= sPilot.ladderBottomY + 25.0f) {
-                landing = upperProbe;
-                landing.y = upperY;
-                foundTop = true;
-                break;
+                Vec3f candidate = upperProbe;
+                candidate.y = upperY;
+                if (Pilot_HasLandingSupport(play, player, candidate, true)) {
+                    landing = candidate;
+                    foundTop = true;
+                    break;
+                }
             }
         }
         if (foundTop) {
@@ -494,7 +525,10 @@ void Pilot_CheckNativeLadderBoundary(Player* player, PlayState* play, s32 direct
                    sPilot.ladderTopEntry.y >= sPilot.ladderTopY - 14.0f) {
             // Return to the ORIGINAL platform when climbing back out
             // of the ladder P2 entered from above.
-            Pilot_LadderDismount(player, play, true, sPilot.ladderTopEntry);
+            if (Pilot_HasLandingSupport(play, player, sPilot.ladderTopEntry, true))
+                Pilot_LadderDismount(player, play, true, sPilot.ladderTopEntry);
+            else
+                SPDLOG_WARN("[ShipCrew] P2 previous ladder-top entrance no longer has safe landing support");
         }
     }
 }
@@ -543,11 +577,23 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, f32 worldX, f32 worldZ,
             sPilot.ladderDismountStart.z + (sPilot.ladderDismountGoal.z - sPilot.ladderDismountStart.z) * progress;
         if (finished) {
             actor->world.pos = sPilot.ladderDismountGoal;
-            // Reacquire real floor state before ordinary P2 physics resumes:
-            // a synthetic ground bit alone can leave P2 floating or falling
-            // on the next frame after the dismount animation.
-            Actor_UpdateBgCheckInfo(play, actor, 26.0f, 6.0f, player->ageProperties->ceilingCheckHeight, 7);
-            actor->bgCheckFlags |= BGCHECKFLAG_GROUND;
+            const bool supported = Pilot_HasLandingSupport(play, player, actor->world.pos, sPilot.ladderDismountAtTop);
+            Actor_UpdateBgCheckInfo(play, actor, 26.0f, player->ageProperties->wallCheckRadius,
+                                    player->ageProperties->ceilingCheckHeight, 0x3F);
+            if (supported) {
+                actor->floorHeight = sPilot.ladderDismountGoal.y;
+                actor->bgCheckFlags |= BGCHECKFLAG_GROUND;
+                sPilot.ledgeCooldownFrames = std::max(sPilot.ledgeCooldownFrames, 55);
+                sPilot.ladderExitGraceFrames = 75;
+                sPilot.ladderExitPosition = actor->world.pos;
+                sPilot.ledgeProbeFrames = sPilot.ledgeProbeType = 0;
+                SPDLOG_INFO("[ShipCrew] P2 ladder landed: top={} pos=({}, {}, {})", sPilot.ladderDismountAtTop,
+                            actor->world.pos.x, actor->world.pos.y, actor->world.pos.z);
+            } else {
+                actor->bgCheckFlags &= ~BGCHECKFLAG_GROUND;
+                SPDLOG_WARN("[ShipCrew] P2 ladder exit has no supporting floor: top={} pos=({}, {}, {})",
+                            sPilot.ladderDismountAtTop, actor->world.pos.x, actor->world.pos.y, actor->world.pos.z);
+            }
             Pilot_ClearLadder(player);
         }
     } else {
@@ -658,6 +704,17 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
 
     const bool grounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
     const bool falling = actor->velocity.y < 0.0f;
+    // After a verified ladder landing, don't autojump or re-mantle the
+    // adjacent railing/wall during the short transition to normal walking.
+    if (sPilot.ladderExitGraceFrames > 0) {
+        const f32 dx = actor->world.pos.x - sPilot.ladderExitPosition.x;
+        const f32 dz = actor->world.pos.z - sPilot.ladderExitPosition.z;
+        if (dx * dx + dz * dz < 55.0f * 55.0f) {
+            sPilot.ledgeProbeFrames = sPilot.ledgeProbeType = 0;
+            return false;
+        }
+        sPilot.ladderExitGraceFrames = 0;
+    }
     // Player 1's autojump starts on BGCHECKFLAG_GROUND_LEAVE for a real drop,
     // with forward momentum and an unobstructed facing direction. Never
     // assign a manual jump button to P2.
@@ -671,6 +728,8 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
         } else {
             jumpSpeed = IREG(68) / 100.0f + IREG(69) * player->linearVelocity / 1000.0f;
         }
+        SPDLOG_INFO("[ShipCrew] P2 autojump ground-leave: pos=({}, {}, {}) floor={} speed={}", actor->world.pos.x,
+                    actor->world.pos.y, actor->world.pos.z, actor->floorHeight, actor->speedXZ);
         Pilot_BeginJump(player, std::max(4.0f, jumpSpeed));
         return false;
     }
@@ -718,6 +777,8 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
     }
 
     if (type == PLAYER_LEDGE_CLIMB_1 && sPilot.ledgeProbeFrames >= 3) {
+        SPDLOG_INFO("[ShipCrew] P2 low-step jump: rise={} pos=({}, {}, {})", rise, actor->world.pos.x,
+                    actor->world.pos.y, actor->world.pos.z);
         Pilot_BeginJump(player, rise * 0.08f + 5.5f);
         actor->speedXZ = player->linearVelocity = 2.5f;
         actor->world.rot.y = player->yaw = facing;
@@ -731,6 +792,8 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
     sPilot.ledgeFacing = facing;
     sPilot.ledgeProbeFrames = 0;
     if (type == PLAYER_LEDGE_CLIMB_4) {
+        SPDLOG_INFO("[ShipCrew] P2 high-step: rise={} pos=({}, {}, {})", rise, actor->world.pos.x, actor->world.pos.y,
+                    actor->world.pos.z);
         sPilot.traversal = PilotTraversal::HighStepWindup;
         actor->speedXZ = player->linearVelocity = actor->velocity.y = 0.0f;
         actor->gravity = 0.0f;
@@ -931,6 +994,9 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         sPilot = {};
         sPilot.actor = actor;
     }
+
+    if (sPilot.ladderExitGraceFrames > 0)
+        --sPilot.ladderExitGraceFrames;
 
     // Track inventory changes that happen outside P2's own one-use handler.
     // These can be expected P1 usage, Anchor synchronization or other hooks;
