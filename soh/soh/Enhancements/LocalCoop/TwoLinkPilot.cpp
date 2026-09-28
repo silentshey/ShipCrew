@@ -107,6 +107,8 @@ struct PilotRuntime {
     f32 takeoffY = 0.0f;
     f32 ledgeRise = 0.0f;
     Vec3f ledgeStand = {};
+    Vec3f hangAnchor = {};
+    Vec3f climbStart = {};
     s16 ledgeFacing = 0;
     PilotTraversal traversal = PilotTraversal::None;
     PilotLadder ladder = PilotLadder::None;
@@ -187,9 +189,12 @@ void Pilot_BeginClimb(Player* player, PlayState* play, s32 type, bool fromHang) 
     if (player->ageProperties == nullptr)
         return;
 
-    const f32 rise = fromHang ? sPilot.ledgeRise : sPilot.ledgeStand.y - actor->world.pos.y;
-    actor->world.pos = sPilot.ledgeStand;
-    actor->prevPos = actor->world.pos; // Climb starts at the destination with a visual vertical offset.
+    // P1 climbs with animation movement. Starting P2 at the FINAL ledge
+    // position was instantly teleporting the actor and its native camera,
+    // while the visual model was held down with a huge shape.yOffset.
+    // Keep both at the real starting anchor and advance through the animation.
+    sPilot.climbStart = actor->world.pos;
+    actor->prevPos = actor->world.pos;
     actor->velocity.y = 0.0f;
     actor->speedXZ = player->linearVelocity = 0.0f;
     actor->gravity = 0.0f;
@@ -198,17 +203,14 @@ void Pilot_BeginClimb(Player* player, PlayState* play, s32 type, bool fromHang) 
     player->stateFlags1 &= ~PLAYER_STATE1_HANGING_OFF_LEDGE;
     player->stateFlags1 |= PLAYER_STATE1_CLIMBING_LEDGE | PLAYER_STATE1_JUMPING;
 
+    actor->shape.yOffset = 0.0f;
     LinkAnimationHeader* animation;
-    if (fromHang) {
+    if (fromHang)
         animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_jump_climb_up);
-        actor->shape.yOffset -= rise * 100.0f;
-    } else if (type == PLAYER_LEDGE_CLIMB_3) {
+    else if (type == PLAYER_LEDGE_CLIMB_3)
         animation = Pilot_Animation(gPlayerAnim_link_normal_150step_up);
-        actor->shape.yOffset -= (rise - 59.0f * player->ageProperties->unk_08) * 100.0f;
-    } else {
+    else
         animation = Pilot_Animation(gPlayerAnim_link_normal_100step_up);
-        actor->shape.yOffset -= (rise - 41.0f * player->ageProperties->unk_08) * 100.0f;
-    }
 
     sPilot.traversal = PilotTraversal::Climbing;
     sPilot.ledgeCooldownFrames = 18;
@@ -248,8 +250,12 @@ void Pilot_BeginHang(Player* player, PlayState* play, f32 rise, const Vec3f& sta
     sPilot.ledgeRise = rise;
     sPilot.traversal = PilotTraversal::Hanging;
     sPilot.ledgeCooldownFrames = 12;
-    actor->world.pos = stand;
-    actor->prevPos = actor->world.pos; // Do not interpolate across a newly grabbed ledge.
+    // 'stand' is the TOP of the wall, not the hanging location. Preserve
+    // physical hanging height instead of snapping P2/camera upwards.
+    actor->world.pos.x = stand.x;
+    actor->world.pos.z = stand.z;
+    sPilot.hangAnchor = actor->world.pos;
+    actor->prevPos = actor->world.pos;
     actor->shape.rot.y = actor->world.rot.y = player->yaw = facing;
     actor->velocity.y = actor->speedXZ = player->linearVelocity = 0.0f;
     actor->gravity = 0.0f;
@@ -278,7 +284,8 @@ bool Pilot_UpdateTraversal(Player* player, PlayState* play, const OSContPad& pad
     actor->velocity.y = 0.0f;
     actor->gravity = 0.0f;
     if (sPilot.traversal == PilotTraversal::Hanging) {
-        actor->world.pos = sPilot.ledgeStand;
+        actor->world.pos = sPilot.hangAnchor;
+        actor->prevPos = actor->world.pos;
         if (pad.stick_y > 25 || (pressed & BTN_A)) {
             Pilot_BeginClimb(player, play, PLAYER_LEDGE_CLIMB_3, true);
         } else if (pad.stick_y < -25) {
@@ -308,13 +315,21 @@ bool Pilot_UpdateTraversal(Player* player, PlayState* play, const OSContPad& pad
         }
     } else if (sPilot.traversal == PilotTraversal::Climbing) {
         const bool finished = LinkAnimation_Update(play, &player->skelAnime) != 0;
-        if (player->skelAnime.curFrame > 5.0f) {
-            // Resolve the entire temporary visual climb offset by the end
-            // of the native animation instead of snapping thousands of units.
-            const f32 framesLeft = std::max(1.0f, player->skelAnime.endFrame - player->skelAnime.curFrame);
-            Math_StepToF(&actor->shape.yOffset, 0.0f, std::max(150.0f, std::fabs(actor->shape.yOffset) / framesLeft));
-        }
+        const f32 end = std::max(1.0f, player->skelAnime.endFrame);
+        const f32 t = finished ? 1.0f : std::clamp(player->skelAnime.curFrame / end, 0.0f, 1.0f);
+        // Advance the actual actor/camera over the climbing animation rather
+        // than placing the actor at the destination before the climb begins.
+        // A smooth start/stop avoids a second spike at the transition.
+        const f32 progress = t * t * (3.0f - 2.0f * t);
+        actor->prevPos = actor->world.pos;
+        actor->world.pos.x = sPilot.climbStart.x + (sPilot.ledgeStand.x - sPilot.climbStart.x) * progress;
+        actor->world.pos.y = sPilot.climbStart.y + (sPilot.ledgeStand.y - sPilot.climbStart.y) * progress;
+        actor->world.pos.z = sPilot.climbStart.z + (sPilot.ledgeStand.z - sPilot.climbStart.z) * progress;
+        // The skeleton has baked-in root translation. During isolated P2
+        // movement the world actor, not both world + root, owns displacement.
+        player->skelAnime.jointTable[0] = player->skelAnime.baseTransl;
         if (finished) {
+            actor->world.pos = sPilot.ledgeStand;
             Pilot_ClearTraversal(actor, player);
             sPilot.landingFrames = kLandingFrames;
             sPilot.ledgeCooldownFrames = 20;
@@ -414,6 +429,7 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, const OSContPad& pad, b
             // Hold on the ladder at the current animation frame.
             player->stateFlags2 |= PLAYER_STATE2_STATIONARY_LADDER;
         } else {
+            player->stateFlags2 &= ~PLAYER_STATE2_STATIONARY_LADDER;
             const f32 stickSpeed = std::clamp(std::fabs(static_cast<f32>(pad.stick_y)) * 0.05f, 1.0f, 3.35f);
             const f32 climbSpeed = stickSpeed + CVarGetInteger(CVAR_ENHANCEMENT("ClimbSpeed"), 0);
             if (direction != sPilot.ladderDirection) {
@@ -433,7 +449,11 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, const OSContPad& pad, b
             // climbing assets. The separate pilot currently owns position,
             // so reproduce that translation without Player_StartAnimMovement
             // (which would mutate P1-only action globals).
-            actor->world.pos.y += direction * climbSpeed * player->ageProperties->unk_08 * 1.45f;
+            const f32 cycle = std::max(1.0f, Animation_GetLastFrame(player->skelAnime.animation));
+            // P1's native ladder is a roughly 15-unit root-motion step per
+            // animation cycle, not the pilot's arbitrary 1.45 units/frame.
+            // Scale displacement with animation playback, including reverse.
+            actor->world.pos.y += direction * (15.0f / cycle) * climbSpeed * player->ageProperties->unk_08;
 
             // A bottom-entry query can see only one segmented ladder polygon.
             // Refresh the upper bound when the next tagged section is visible.
@@ -503,7 +523,8 @@ bool Pilot_TryLadder(Player* player, PlayState* play, const OSContPad& pad, bool
     f32 topY = 0.0f;
     // Prefer the requested top descent: from ground directly above an
     // actual flagged ladder, P2 can press DOWN without falling first.
-    if (pad.stick_y < -25 && ShipCrewPlayer_QueryLadder(play, player, true, &anchor, &yaw, &bottomY, &topY)) {
+    if ((player->actor.bgCheckFlags & BGCHECKFLAG_GROUND) && std::abs(pad.stick_y) > 25 &&
+        ShipCrewPlayer_QueryLadder(play, player, true, &anchor, &yaw, &bottomY, &topY)) {
         Pilot_BeginLadder(player, play, true, anchor, yaw, bottomY, topY);
         return true;
     }
