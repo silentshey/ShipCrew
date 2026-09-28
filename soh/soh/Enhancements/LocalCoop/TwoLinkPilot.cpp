@@ -39,12 +39,12 @@ void ShipCrewPlayer_StartNativeRollClip(PlayState* play, Player* player, f32 wat
 LinkAnimationHeader* ShipCrewPlayer_SelectNativeDodge(s32 direction, s32 landing);
 f32 ShipCrewPlayer_NativeDodgeVerticalSpeed(s32 direction);
 f32 ShipCrewPlayer_NativeDodgeHorizontalSpeed(s32 direction);
-LinkAnimationHeader* ShipCrewPlayer_SelectNativeLadderRung(Player* player, s32 phase, s32 direction);
 void ShipCrewPlayer_QueueNativeAnimMovement(PlayState* play, Player* player);
 void ShipCrewPlayer_BeginNativeClimb(PlayState* play, Player* player, const Vec3f* entry, s16 entryYaw,
                                      s32 fromTop, s32 freeClimb);
 s32 ShipCrewPlayer_IsNativeClimbAction(Player* player);
 s32 ShipCrewPlayer_UpdateNativeClimbForPilot(PlayState* play, Player* player, Input* input);
+void ShipCrewPlayer_CancelNativeClimbForPilot(PlayState* play, Player* player);
 s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* rise, Vec3f* stand, s16* facing);
 s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec3f* anchor, s16* facing, f32* bottomY,
                                f32* topY, s16 approachYaw);
@@ -96,7 +96,7 @@ bool sRenderingSecondCamera = false;
 // runtime into the common per-player component keyed by local player slot.
 enum class PilotItemPose { None, BombPickup, BombThrow, Nut };
 enum class PilotTraversal { None, AutoJump, HighStepWindup, Hanging, Climbing };
-enum class PilotLadder { None, EnterBottom, EnterTop, Active, DismountBottom, DismountTop };
+enum class PilotLadder { None, Active };
 enum class PilotLockMove { None, Forward, Back, Left, Right };
 enum class PilotDodge { None, SideLeft, Backflip, SideRight };
 enum class PilotCrawl { None, Enter, Move, Exit };
@@ -144,26 +144,10 @@ struct PilotRuntime {
     s16 ledgeFacing = 0;
     PilotTraversal traversal = PilotTraversal::None;
     PilotLadder ladder = PilotLadder::None;
-    bool freeClimb = false;
-    int ladderStep = 0;
-    int ladderDirection = 0; // Current committed rung: finish before reversing or releasing.
-    bool ladderTopAwaitNeutral = false;
-    f32 ladderCycleSpeed = 1.0f;
-    bool ladderBoundaryPending = false;
-    int ladderCompletedDirection = 0;
+
     int ladderCooldown = 0;
     int ladderExitGraceFrames = 0;
-    bool ladderDismountAtTop = false;
     Vec3f ladderExitPosition = {};
-    Vec3f ladderAnchor = {};
-    Vec3f ladderEntryStart = {};
-    Vec3f ladderEntryGoal = {};
-    Vec3f ladderDismountStart = {};
-    Vec3f ladderDismountGoal = {};
-    Vec3f ladderTopEntry = {};
-    s16 ladderYaw = 0;
-    f32 ladderTopY = 0.0f;
-    f32 ladderBottomY = 0.0f;
     int itemFrames = 0;
     // Track shared ammo between P2 updates. A changed value outside a P2
     // item transaction comes from P1, a save edit, or an external sync.
@@ -404,12 +388,7 @@ bool Pilot_UpdateTraversal(Player* player, PlayState* play, const OSContPad& pad
 // file-static control state and GET_PLAYER() action machine are not.
 void Pilot_ClearLadder(Player* player) {
     sPilot.ladder = PilotLadder::None;
-    sPilot.freeClimb = false;
-    sPilot.ladderDirection = 0;
-    sPilot.ladderBoundaryPending = false;
-    sPilot.ladderCompletedDirection = 0;
     player->skelAnime.movementFlags = 0;
-    sPilot.ladderTopAwaitNeutral = false;
     sPilot.ladderCooldown = 16;
     player->stateFlags1 &= ~PLAYER_STATE1_CLIMBING_LADDER;
     player->stateFlags2 &= ~PLAYER_STATE2_STATIONARY_LADDER;
@@ -428,11 +407,6 @@ void Pilot_BeginLadder(Player* player, PlayState* play, bool fromTop, const Vec3
                        f32 topY, bool freeClimb = false) {
     Actor* actor = &player->actor;
     sPilot.ladder = PilotLadder::Active;
-    sPilot.freeClimb = freeClimb;
-    sPilot.ladderYaw = yaw;
-    sPilot.ladderBottomY = bottomY;
-    sPilot.ladderTopY = topY;
-    sPilot.ladderTopEntry = actor->world.pos;
     SPDLOG_INFO("[ShipCrew] P2 native P1 climb entry: top={} vine={} bottomY={} topY={}",
                 fromTop, freeClimb, bottomY, topY);
 
@@ -453,6 +427,7 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, f32 worldX, f32 worldZ,
     (void)worldX;
     (void)worldZ;
     if (!canAct || player->ageProperties == nullptr) {
+        ShipCrewPlayer_CancelNativeClimbForPilot(play, player);
         Pilot_ClearLadder(player);
         return false;
     }
@@ -1167,8 +1142,10 @@ void Pilot_Update(Actor* actor, PlayState* play) {
          sPilot.traversal == PilotTraversal::HighStepWindup)) {
         Pilot_ClearTraversal(actor, player);
     }
-    if (!nativeTraversal && sPilot.ladder != PilotLadder::None)
+    if (!nativeTraversal && sPilot.ladder != PilotLadder::None) {
+        ShipCrewPlayer_CancelNativeClimbForPilot(play, player);
         Pilot_ClearLadder(player);
+    }
     if (nativeTraversal && Pilot_UpdateLadder(player, play, worldX, worldZ, canAct)) {
         player->currentTunic = GET_PLAYER(play)->currentTunic;
         player->currentBoots = GET_PLAYER(play)->currentBoots;
