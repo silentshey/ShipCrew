@@ -888,6 +888,14 @@ void Pilot_Update(Actor* actor, PlayState* play) {
          sPilot.traversal == PilotTraversal::HighStepWindup)) {
         Pilot_ClearTraversal(actor, player);
     }
+    if (!nativeTraversal && sPilot.ladder != PilotLadder::None)
+        Pilot_ClearLadder(player);
+    if (nativeTraversal && Pilot_UpdateLadder(player, play, pad, canAct)) {
+        player->currentTunic = GET_PLAYER(play)->currentTunic;
+        player->currentBoots = GET_PLAYER(play)->currentBoots;
+        player->currentShield = GET_PLAYER(play)->currentShield;
+        return;
+    }
     if (nativeTraversal && Pilot_UpdateTraversal(player, play, pad, pressed, canAct)) {
         player->currentTunic = GET_PLAYER(play)->currentTunic;
         player->currentBoots = GET_PLAYER(play)->currentBoots;
@@ -1069,6 +1077,13 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     }
     if (wasGrounded && !(actor->bgCheckFlags & BGCHECKFLAG_GROUND))
         sPilot.takeoffY = actor->world.pos.y;
+    if (Pilot_TryLadder(player, play, pad, nativeTraversal, canAct, moving,
+                        Pilot_FindHeldBomb(actor, play) != nullptr)) {
+        Actor_SetFocus(actor, 40.0f);
+        sPilot.lastObservedBombAmmo = AMMO(ITEM_BOMB);
+        sPilot.lastObservedNutAmmo = AMMO(ITEM_NUT);
+        return;
+    }
     if (Pilot_TryTraversal(player, play, wasGrounded, canAct, moving, nativeTraversal,
                            Pilot_FindHeldBomb(actor, play) != nullptr)) {
         Actor_SetFocus(actor, 40.0f);
