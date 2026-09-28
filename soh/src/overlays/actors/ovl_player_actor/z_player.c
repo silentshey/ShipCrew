@@ -7955,8 +7955,8 @@ s32 func_8083EC18(Player* this, PlayState* play, u32 wallFlags) {
 
 // P2 attachment uses the very same native P1 action callbacks and animation
 // movement. P1 retains the original environment and item put-away gates.
-void ShipCrewPlayer_BeginNativeClimb(PlayState* play, Player* player, const Vec3f* entry,
-                                     s16 entryYaw, s32 fromTop, s32 freeClimb) {
+void ShipCrewPlayer_BeginNativeClimb(PlayState* play, Player* player, const Vec3f* entry, s16 entryYaw, s32 fromTop,
+                                     s32 freeClimb) {
     if (play == NULL || player == NULL || entry == NULL || player->ageProperties == NULL)
         return;
 
@@ -7977,11 +7977,10 @@ void ShipCrewPlayer_BeginNativeClimb(PlayState* play, Player* player, const Vec3
     func_80832224(player);
     player->actor.prevPos = player->actor.world.pos;
 
-    LinkAnimationHeader* anim = freeClimb
-                                    ? ((player->actor.bgCheckFlags & BGCHECKFLAG_GROUND)
-                                           ? &gPlayerAnim_link_normal_Fclimb_startA
-                                           : &gPlayerAnim_link_normal_Fclimb_hold2upL)
-                                    : (fromTop ? player->ageProperties->unk_A8 : player->ageProperties->unk_A4);
+    LinkAnimationHeader* anim =
+        freeClimb ? ((player->actor.bgCheckFlags & BGCHECKFLAG_GROUND) ? &gPlayerAnim_link_normal_Fclimb_startA
+                                                                       : &gPlayerAnim_link_normal_Fclimb_hold2upL)
+                  : (fromTop ? player->ageProperties->unk_A8 : player->ageProperties->unk_A4);
     Player_AnimPlayOnce(play, player, anim);
     Player_StartAnimMovement(play, player, 0x9F);
     sControlInput = previousInput;
@@ -13735,7 +13734,7 @@ void Player_Action_DismountLadder(Player* this, PlayState* play) {
     // P2 runs the same native dismount but defers its interrupt window until
     // the action handlers and equipment are individually player-scoped.
     interruptResult = sShipCrewPilotNativeClimb ? PLAYER_INTERRUPT_NONE
-                                               : Player_TryActionInterrupt(play, this, &this->skelAnime, 4.0f);
+                                                : Player_TryActionInterrupt(play, this, &this->skelAnime, 4.0f);
 
     // SoH: Prevent ladder cutscene softlock
     if (GameInteractor_Should(VB_INTERRUPT_LADDER_DISMOUNT, interruptResult == PLAYER_INTERRUPT_NEW_ACTION,
@@ -13774,10 +13773,8 @@ void Player_Action_DismountLadder(Player* this, PlayState* play) {
 s32 ShipCrewPlayer_IsNativeClimbAction(Player* player) {
     if (player == NULL)
         return false;
-    return player->actionFunc == Player_Action_8084BF1C ||
-           player->actionFunc == Player_Action_DismountLadder ||
-           player->actionFunc == Player_Action_8084BDFC ||
-           player->actionFunc == Player_Action_8084BBE4;
+    return player->actionFunc == Player_Action_8084BF1C || player->actionFunc == Player_Action_DismountLadder ||
+           player->actionFunc == Player_Action_8084BDFC || player->actionFunc == Player_Action_8084BBE4;
 }
 
 void ShipCrewPlayer_CancelNativeClimbForPilot(PlayState* play, Player* player) {
@@ -13797,8 +13794,7 @@ s32 ShipCrewPlayer_UpdateNativeClimbForPilot(PlayState* play, Player* player, In
     sControlInput = input;
     sTouchedWallFlags = (player->actor.wallPoly == NULL)
                             ? 0
-                            : SurfaceType_GetWallFlags(&play->colCtx, player->actor.wallPoly,
-                                                       player->actor.wallBgId);
+                            : SurfaceType_GetWallFlags(&play->colCtx, player->actor.wallPoly, player->actor.wallBgId);
     sYDistToFloor = player->actor.world.pos.y - player->actor.floorHeight;
     sShipCrewPilotNativeClimb = true;
     // Vanilla clears transient per-action flags immediately before the native

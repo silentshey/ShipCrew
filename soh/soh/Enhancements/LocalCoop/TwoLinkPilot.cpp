@@ -40,8 +40,8 @@ LinkAnimationHeader* ShipCrewPlayer_SelectNativeDodge(s32 direction, s32 landing
 f32 ShipCrewPlayer_NativeDodgeVerticalSpeed(s32 direction);
 f32 ShipCrewPlayer_NativeDodgeHorizontalSpeed(s32 direction);
 void ShipCrewPlayer_QueueNativeAnimMovement(PlayState* play, Player* player);
-void ShipCrewPlayer_BeginNativeClimb(PlayState* play, Player* player, const Vec3f* entry, s16 entryYaw,
-                                     s32 fromTop, s32 freeClimb);
+void ShipCrewPlayer_BeginNativeClimb(PlayState* play, Player* player, const Vec3f* entry, s16 entryYaw, s32 fromTop,
+                                     s32 freeClimb);
 s32 ShipCrewPlayer_IsNativeClimbAction(Player* player);
 s32 ShipCrewPlayer_UpdateNativeClimbForPilot(PlayState* play, Player* player, Input* input);
 void ShipCrewPlayer_CancelNativeClimbForPilot(PlayState* play, Player* player);
@@ -407,8 +407,8 @@ void Pilot_BeginLadder(Player* player, PlayState* play, bool fromTop, const Vec3
                        f32 topY, bool freeClimb = false) {
     Actor* actor = &player->actor;
     sPilot.ladder = PilotLadder::Active;
-    SPDLOG_INFO("[ShipCrew] P2 native P1 climb entry: top={} vine={} bottomY={} topY={}",
-                fromTop, freeClimb, bottomY, topY);
+    SPDLOG_INFO("[ShipCrew] P2 native P1 climb entry: top={} vine={} bottomY={} topY={}", fromTop, freeClimb, bottomY,
+                topY);
 
     // P1's native top/bottom entry clips have their own root translation.
     // Do not interpolate the actor independently or pre-warp its camera.
@@ -442,8 +442,8 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, f32 worldX, f32 worldZ,
         sPilot.ladderExitGraceFrames = 55;
         sPilot.ladderExitPosition = actor->world.pos;
         sPilot.ledgeCooldownFrames = std::max(sPilot.ledgeCooldownFrames, 18);
-        SPDLOG_INFO("[ShipCrew] P2 native climb action exited at ({}, {}, {})", actor->world.pos.x,
-                    actor->world.pos.y, actor->world.pos.z);
+        SPDLOG_INFO("[ShipCrew] P2 native climb action exited at ({}, {}, {})", actor->world.pos.x, actor->world.pos.y,
+                    actor->world.pos.z);
         Pilot_ClearLadder(player);
         return false;
     }
