@@ -44,6 +44,9 @@ void ShipCrewPlayer_QueueNativeAnimMovement(PlayState* play, Player* player);
 s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* rise, Vec3f* stand, s16* facing);
 s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec3f* anchor, s16* facing, f32* bottomY,
                                f32* topY, s16 approachYaw);
+s32 ShipCrewPlayer_QueryCrawlspace(PlayState* play, Player* player, Vec3f* center);
+s32 ShipCrewPlayer_CanLiftContextActor(Actor* actor);
+s32 Player_CanThrowCarriedActor(Player* player, Actor* actor);
 }
 
 // The experimental switch lives in the existing Controls settings screen.
@@ -94,6 +97,10 @@ struct PilotRuntime {
     Actor* actor = nullptr;
     Actor* heldBomb = nullptr;
     Actor* lockedTarget = nullptr;
+    Actor* pickupCandidate = nullptr;
+    Actor* carriedProp = nullptr;
+    bool pickupAttached = false;
+    int contextCooldown = 0;
     PilotLockMove lockMove = PilotLockMove::None;
     bool parallelTargeting = false;
     int parallelRecenterFrames = 0;
@@ -835,6 +842,106 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
 // Snapshot BEFORE Actor_Spawn. If an actor-spawn hook already consumed the
 // item, do not charge it a second time. Unlike forcing a fixed count after
 // each frame, this only reconciles one successfully spawned item transaction.
+// Environmental props already implement P1's native lift/throw physics.
+// P2 only supplies an independent spatial candidate and the original
+// parent/child handoff; never spawn a substitute actor or duplicate drops.
+Actor* Pilot_LiveProp(PlayState* play, Actor* ptr) {
+    if (ptr == nullptr) return nullptr;
+    for (Actor* a = play->actorCtx.actorLists[ACTORCAT_PROP].head; a != nullptr; a = a->next) {
+        if (a == ptr) return a->update != nullptr ? a : nullptr;
+    }
+    return nullptr;
+}
+Actor* Pilot_FindContextProp(PlayState* play, Player* player) {
+    Actor* best = nullptr;
+    f32 bestDistance = 50.0f * 50.0f;
+    Actor* actor = &player->actor;
+    for (Actor* p = play->actorCtx.actorLists[ACTORCAT_PROP].head; p != nullptr; p = p->next) {
+        if (p->update == nullptr || p->parent != nullptr || !ShipCrewPlayer_CanLiftContextActor(p)) continue;
+        // Large rocks use P1's separate silver gauntlet cutscene/animation;
+        // this first pass deliberately covers small rocks, plants and pots.
+        if (p->id == ACTOR_EN_ISHI && (p->params & 0xF) == 1) continue;
+        const f32 dx = p->world.pos.x - actor->world.pos.x;
+        const f32 dz = p->world.pos.z - actor->world.pos.z;
+        const f32 ds = dx * dx + dz * dz;
+        if (ds >= bestDistance || std::fabs(p->world.pos.y - actor->world.pos.y) > 23.0f) continue;
+        const s16 toward = Math_Atan2S(dx, dz);
+        if (ABS((s16)(toward - actor->shape.rot.y)) > 0x3300) continue;
+        best = p;
+        bestDistance = ds;
+    }
+    return best;
+}
+void Pilot_DetachProp(Player* player, Actor* prop, bool throwing) {
+    const s16 yaw = player->actor.shape.rot.y;
+    if (prop != nullptr) {
+        const f32 reach = throwing ? 26.0f : 14.0f;
+        prop->world.pos.x = player->actor.world.pos.x + Math_SinS(yaw) * reach;
+        prop->world.pos.z = player->actor.world.pos.z + Math_CosS(yaw) * reach;
+        prop->world.pos.y = player->actor.world.pos.y + (throwing ? 30.0f : 8.0f);
+        prop->world.rot.y = prop->shape.rot.y = yaw;
+        prop->speedXZ = throwing ? player->linearVelocity + 8.0f : 0.0f;
+        prop->velocity.y = throwing ? 12.0f : 0.0f;
+        prop->parent = nullptr; // Original prop actor now handles thrown/fall phase.
+    }
+    if (player->actor.child == prop) player->actor.child = nullptr;
+    player->heldActor = nullptr;
+    player->interactRangeActor = nullptr;
+    player->stateFlags1 &= ~PLAYER_STATE1_CARRYING_ACTOR;
+    sPilot.carriedProp = nullptr;
+    sPilot.pickupCandidate = nullptr;
+    sPilot.pickupAttached = false;
+    sPilot.contextCooldown = 12;
+}
+void Pilot_PositionProp(Player* player, Actor* prop) {
+    const s16 yaw = player->actor.shape.rot.y;
+    prop->world.pos.x = player->actor.world.pos.x + Math_SinS(yaw) * 8.0f;
+    prop->world.pos.y = player->actor.world.pos.y + 46.0f;
+    prop->world.pos.z = player->actor.world.pos.z + Math_CosS(yaw) * 8.0f;
+    prop->world.rot.y = prop->shape.rot.y = yaw;
+    prop->speedXZ = prop->velocity.y = 0.0f;
+}
+bool Pilot_StartPropPickup(Player* player, PlayState* play) {
+    if (sPilot.contextCooldown != 0 || sPilot.pickupCandidate != nullptr || sPilot.carriedProp != nullptr) return false;
+    Actor* prop = Pilot_FindContextProp(play, player);
+    if (prop == nullptr) return false;
+    sPilot.pickupCandidate = prop;
+    player->interactRangeActor = prop;
+    player->actor.speedXZ = player->linearVelocity = 0.0f;
+    // P1's Player_Action_80846050 chooses carryB and attaches on frame 4.
+    LinkAnimationHeader* anim = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_carryB);
+    LinkAnimation_Change(play, &player->skelAnime, anim, 1.0f, 0.0f,
+                         Animation_GetLastFrame(anim), ANIMMODE_ONCE, 0.0f);
+    SPDLOG_INFO("[ShipCrew] P2 context pickup id={}", prop->id);
+    return true;
+}
+bool Pilot_UpdatePropPickup(Player* player, PlayState* play) {
+    if (sPilot.pickupCandidate == nullptr) return false;
+    Actor* prop = Pilot_LiveProp(play, sPilot.pickupCandidate);
+    if (prop == nullptr || (prop->parent != nullptr && prop->parent != &player->actor)) {
+        Pilot_DetachProp(player, nullptr, false);
+        return false;
+    }
+    player->actor.speedXZ = player->linearVelocity = 0.0f;
+    const bool finished = LinkAnimation_Update(play, &player->skelAnime) != 0;
+    if (!sPilot.pickupAttached && (player->skelAnime.curFrame >= 4.0f || finished)) {
+        prop->parent = &player->actor;
+        player->actor.child = prop;
+        player->heldActor = prop;
+        player->stateFlags1 |= PLAYER_STATE1_CARRYING_ACTOR;
+        prop->bgCheckFlags &= 0xFF00;
+        sPilot.carriedProp = prop;
+        sPilot.pickupAttached = true;
+    }
+    if (sPilot.pickupAttached) Pilot_PositionProp(player, prop);
+    if (finished) {
+        sPilot.pickupCandidate = nullptr;
+        sPilot.contextCooldown = 12;
+    }
+    Actor_SetFocus(&player->actor, 40.0f);
+    return true;
+}
+
 void Pilot_ConsumeOneSharedAmmo(s16 item, s16 countBeforeSpawn) {
     const s16 expected = countBeforeSpawn - 1;
     const s16 afterSpawn = AMMO(item);
@@ -1020,6 +1127,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
 
     if (sPilot.ladderExitGraceFrames > 0)
         --sPilot.ladderExitGraceFrames;
+    if (sPilot.contextCooldown > 0)
+        --sPilot.contextCooldown;
 
     // Track inventory changes that happen outside P2's own one-use handler.
     // These can be expected P1 usage, Anchor synchronization or other hooks;
@@ -1125,11 +1234,22 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             player->stateFlags1 &= ~PLAYER_STATE1_PARALLEL;
     }
 
+    Actor* carriedProp = Pilot_LiveProp(play, sPilot.carriedProp);
+    if (sPilot.carriedProp != nullptr && (carriedProp == nullptr || carriedProp->parent != actor)) {
+        Pilot_DetachProp(player, nullptr, false);
+        carriedProp = nullptr;
+    }
+    if (Pilot_UpdatePropPickup(player, play)) return;
     Actor* heldBomb = Pilot_FindHeldBomb(actor, play);
     // The original action button releases a carried bomb first. Otherwise A
     // rolls while running; there is no manual A-button jump.
     const bool nativeMovement = CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0;
     const bool nativeTraversal = nativeMovement && CVarGetInteger(SHIPCREW_NATIVE_TRAVERSAL_CVAR, 0) != 0;
+    // Native P1 gives environmental pickup priority over the A-button roll.
+    if (canAct && (pressed & BTN_A) && nativeMovement && wasGrounded && heldBomb == nullptr &&
+        sPilot.rollFrames == 0 && sPilot.itemFrames == 0 && sPilot.dodge == PilotDodge::None &&
+        sPilot.traversal == PilotTraversal::None && sPilot.ladder == PilotLadder::None &&
+        Pilot_StartPropPickup(player, play)) return;
     // One cooldown clock even when probing before AND after ground movement.
     if (sPilot.ladderCooldown > 0)
         --sPilot.ladderCooldown;
@@ -1158,10 +1278,16 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     }
     sPilot.nativeMovementPreviouslyEnabled = nativeMovement;
 
-    if (canAct && (pressed & BTN_A) && heldBomb != nullptr && sPilot.itemDebounceFrames == 0) {
+    if (canAct && (pressed & BTN_A) && carriedProp != nullptr && sPilot.contextCooldown == 0) {
+        const bool throwing = Player_CanThrowCarriedActor(player, carriedProp) != 0;
+        Pilot_DetachProp(player, carriedProp, throwing);
+        carriedProp = nullptr;
+        sPilot.itemPose = PilotItemPose::BombThrow;
+        sPilot.itemFrames = kItemFrames;
+    } else if (canAct && (pressed & BTN_A) && heldBomb != nullptr && sPilot.itemDebounceFrames == 0) {
         Pilot_ReleaseBomb(actor, heldBomb, moving);
         heldBomb = nullptr;
-    } else if (canAct && (pressed & BTN_A) && heldBomb == nullptr && wasGrounded && moving && sPilot.rollFrames == 0 &&
+    } else if (canAct && (pressed & BTN_A) && carriedProp == nullptr && heldBomb == nullptr && wasGrounded && moving && sPilot.rollFrames == 0 &&
                sPilot.itemFrames == 0 && sPilot.dodge == PilotDodge::None) {
         PilotDodge dodge = PilotDodge::None;
         if (nativeMovement && (sPilot.lockedTarget != nullptr || sPilot.parallelTargeting)) {
@@ -1391,7 +1517,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     // ground-leave physics step. P2 previously tested only after falling.
     const s16 approachYaw = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
     if (nativeTraversal && wasGrounded &&
-        Pilot_TryLadder(player, play, approachYaw, nativeTraversal, canAct, moving, heldBomb != nullptr)) {
+        Pilot_TryLadder(player, play, approachYaw, nativeTraversal, canAct, moving, heldBomb != nullptr || carriedProp != nullptr)) {
         Actor_SetFocus(actor, 40.0f);
         return;
     }
@@ -1430,14 +1556,14 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     if (wasGrounded && !(actor->bgCheckFlags & BGCHECKFLAG_GROUND))
         sPilot.takeoffY = actor->world.pos.y;
     if (Pilot_TryLadder(player, play, approachYaw, nativeTraversal, canAct, moving,
-                        Pilot_FindHeldBomb(actor, play) != nullptr)) {
+                        (Pilot_FindHeldBomb(actor, play) != nullptr || sPilot.carriedProp != nullptr))) {
         Actor_SetFocus(actor, 40.0f);
         sPilot.lastObservedBombAmmo = AMMO(ITEM_BOMB);
         sPilot.lastObservedNutAmmo = AMMO(ITEM_NUT);
         return;
     }
     if (Pilot_TryTraversal(player, play, wasGrounded, canAct, moving, nativeTraversal,
-                           Pilot_FindHeldBomb(actor, play) != nullptr)) {
+                           (Pilot_FindHeldBomb(actor, play) != nullptr || sPilot.carriedProp != nullptr))) {
         Actor_SetFocus(actor, 40.0f);
         sPilot.lastObservedBombAmmo = AMMO(ITEM_BOMB);
         sPilot.lastObservedNutAmmo = AMMO(ITEM_NUT);
@@ -1459,6 +1585,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             Pilot_ClearTraversal(actor, player);
     }
 
+    carriedProp = Pilot_LiveProp(play, sPilot.carriedProp);
+    if (carriedProp != nullptr && carriedProp->parent == actor) Pilot_PositionProp(player, carriedProp);
     // Keep the live bomb attached to P2's position until A releases it.
     // Check the actor list before touching the pointer; the fuse still runs.
     heldBomb = Pilot_FindHeldBomb(actor, play);
@@ -1468,7 +1596,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
 
     // Genuine button-down edges plus a minimum cooldown prevent held-button
     // repeats from draining the entire shared save inventory.
-    if (canAct && grounded && heldBomb == nullptr && sPilot.rollFrames == 0 && sPilot.itemFrames == 0 &&
+    if (canAct && grounded && heldBomb == nullptr && carriedProp == nullptr && sPilot.rollFrames == 0 && sPilot.itemFrames == 0 &&
         sPilot.itemDebounceFrames == 0) {
         if (pressed & BTN_CLEFT) {
             Pilot_UseBomb(actor, play);
@@ -1532,7 +1660,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                 break;
         }
         mode = ANIMMODE_ONCE;
-    } else if (heldBomb != nullptr) {
+    } else if (heldBomb != nullptr || carriedProp != nullptr) {
         animation = Pilot_Animation(moving ? gPlayerAnim_link_normal_carryB : gPlayerAnim_link_normal_carryB_wait);
         locomotionLoop = moving;
     } else if (sPilot.landingFrames > 0) {
@@ -1655,6 +1783,9 @@ void Pilot_Draw(Actor* actor, PlayState* play) {
 }
 
 void Pilot_Destroy(Actor* actor, PlayState* play) {
+    Actor* carriedProp = Pilot_LiveProp(play, sPilot.carriedProp);
+    if (carriedProp != nullptr && carriedProp->parent == actor)
+        Pilot_DetachProp(reinterpret_cast<Player*>(actor), carriedProp, false);
     NameTag_RemoveAllForActor(actor);
     if (sPilot.actor == actor) {
         // A carried bomb must be freed before its P2 parent is destroyed.
