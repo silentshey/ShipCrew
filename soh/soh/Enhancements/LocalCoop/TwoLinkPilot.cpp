@@ -216,6 +216,7 @@ void Pilot_ClearTraversal(Actor* actor, Player* player) {
     if (sPilot.nativeLedgeStep) {
         ShipCrewPlayer_CancelNativeLedgeForPilot(gPlayState, player);
         sPilot.nativeLedgeStep = false;
+        player->stateFlags2 &= ~PLAYER_STATE2_DISABLE_ROTATION_Z_TARGET;
     }
     sPilot.traversal = PilotTraversal::None;
     sPilot.ledgeProbeFrames = 0;
