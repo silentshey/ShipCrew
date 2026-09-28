@@ -45,6 +45,8 @@ s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* rise, Vec3f*
 s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec3f* anchor, s16* facing, f32* bottomY,
                                f32* topY, s16 approachYaw);
 s32 ShipCrewPlayer_QueryCrawlspace(PlayState* play, Player* player, Vec3f* center);
+s32 ShipCrewPlayer_QueryNativeVine(PlayState* play, Player* player, s16 approachYaw, Vec3f* anchor,
+                                  s16* facing, f32* bottomY, f32* topY);
 s32 ShipCrewPlayer_CanLiftContextActor(Actor* actor);
 s32 Player_CanThrowCarriedActor(Player* player, Actor* actor);
 }
@@ -138,6 +140,7 @@ struct PilotRuntime {
     s16 ledgeFacing = 0;
     PilotTraversal traversal = PilotTraversal::None;
     PilotLadder ladder = PilotLadder::None;
+    bool freeClimb = false;
     int ladderStep = 0;
     int ladderDirection = 0; // Current committed rung: finish before reversing or releasing.
     bool ladderTopAwaitNeutral = false;
@@ -397,6 +400,7 @@ bool Pilot_UpdateTraversal(Player* player, PlayState* play, const OSContPad& pad
 // file-static control state and GET_PLAYER() action machine are not.
 void Pilot_ClearLadder(Player* player) {
     sPilot.ladder = PilotLadder::None;
+    sPilot.freeClimb = false;
     sPilot.ladderDirection = 0;
     sPilot.ladderBoundaryPending = false;
     sPilot.ladderCompletedDirection = 0;
@@ -413,10 +417,12 @@ void Pilot_ClearLadder(Player* player) {
 }
 
 void Pilot_BeginLadder(Player* player, PlayState* play, bool fromTop, const Vec3f& anchor, s16 yaw, f32 bottomY,
-                       f32 topY) {
+                       f32 topY, bool freeClimb = false) {
     Actor* actor = &player->actor;
     sPilot.ladder = fromTop ? PilotLadder::EnterTop : PilotLadder::EnterBottom;
-    SPDLOG_INFO("[ShipCrew] P2 ladder attached: fromTop={} bottomY={} topY={}", fromTop, bottomY, topY);
+    sPilot.freeClimb = freeClimb;
+    SPDLOG_INFO("[ShipCrew] P2 tagged climb attached: fromTop={} vine={} bottomY={} topY={}",
+                fromTop, freeClimb, bottomY, topY);
     sPilot.ladderAnchor = anchor;
     sPilot.ladderEntryStart = actor->world.pos;
     sPilot.ladderEntryGoal = anchor;
@@ -441,7 +447,8 @@ void Pilot_BeginLadder(Player* player, PlayState* play, bool fromTop, const Vec3
     actor->world.rot.y = actor->shape.rot.y = player->yaw = yaw;
     actor->bgCheckFlags &= ~BGCHECKFLAG_GROUND;
     player->stateFlags1 |= PLAYER_STATE1_CLIMBING_LADDER;
-    LinkAnimationHeader* anim = fromTop ? player->ageProperties->unk_A8 : player->ageProperties->unk_A4;
+    LinkAnimationHeader* anim = freeClimb ? Pilot_Animation(gPlayerAnim_link_normal_Fclimb_startA)
+                                         : (fromTop ? player->ageProperties->unk_A8 : player->ageProperties->unk_A4);
     LinkAnimation_Change(play, &player->skelAnime, anim, 1.0f, 0.0f, Animation_GetLastFrame(anim), ANIMMODE_ONCE,
                          -3.0f);
 }
@@ -504,9 +511,12 @@ void Pilot_CheckNativeLadderBoundary(Player* player, PlayState* play, s32 direct
         s16 nextYaw = 0;
         f32 nextBottom = 0.0f;
         f32 nextTop = 0.0f;
-        if (ShipCrewPlayer_QueryLadder(play, player, false, &nextAnchor, &nextYaw, &nextBottom, &nextTop,
-                                       sPilot.ladderYaw) &&
-            nextTop > sPilot.ladderTopY)
+        const bool found = sPilot.freeClimb
+            ? ShipCrewPlayer_QueryNativeVine(play, player, sPilot.ladderYaw,
+                                              &nextAnchor, &nextYaw, &nextBottom, &nextTop)
+            : ShipCrewPlayer_QueryLadder(play, player, false, &nextAnchor, &nextYaw,
+                                         &nextBottom, &nextTop, sPilot.ladderYaw);
+        if (found && nextTop > sPilot.ladderTopY)
             sPilot.ladderTopY = nextTop;
     }
 
@@ -519,7 +529,14 @@ void Pilot_CheckNativeLadderBoundary(Player* player, PlayState* play, s32 direct
             actor->world.pos.y < sPilot.ladderTopY - 25.0f) {
             Vec3f landing = actor->world.pos;
             landing.y = floorY;
-            Pilot_LadderDismount(player, play, false, landing);
+            if (sPilot.freeClimb) {
+                // P1 releases free-climb at a supporting floor rather than
+                // playing the special ladder lower-dismount clip.
+                Pilot_ClearLadder(player);
+                actor->world.pos.y = floorY;
+                actor->floorHeight = floorY;
+                sPilot.ledgeCooldownFrames = 18;
+            } else Pilot_LadderDismount(player, play, false, landing);
         }
     } else if (direction > 0) {
         const f32 dirX = Math_SinS(sPilot.ladderYaw);
@@ -551,7 +568,16 @@ void Pilot_CheckNativeLadderBoundary(Player* player, PlayState* play, s32 direct
             }
         }
         if (foundTop) {
-            Pilot_LadderDismount(player, play, true, landing);
+            if (sPilot.freeClimb) {
+                // P1's free-climb uses a ledge-up clip, not the ladder exit.
+                // Reuse P2's existing native ledge transition once the whole
+                // landing footprint is verified.
+                sPilot.ledgeStand = landing;
+                sPilot.ledgeFacing = sPilot.ladderYaw;
+                sPilot.ledgeRise = landing.y - actor->world.pos.y;
+                Pilot_ClearLadder(player);
+                Pilot_BeginClimb(player, play, PLAYER_LEDGE_CLIMB_3, true);
+            } else Pilot_LadderDismount(player, play, true, landing);
         } else if (actor->world.pos.y >= sPilot.ladderTopY - 18.0f &&
                    sPilot.ladderTopEntry.y >= sPilot.ladderTopY - 14.0f) {
             // Return to the ORIGINAL platform when climbing back out
@@ -654,7 +680,8 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, f32 worldX, f32 worldZ,
         if (sPilot.ladderDirection == 0 && requested != 0) {
             // Match P1: alternate age-specific left/right rung assets,
             // selecting the opposite phase when descending.
-            LinkAnimationHeader* anim = ShipCrewPlayer_SelectNativeLadderRung(player, sPilot.ladderStep, requested);
+            LinkAnimationHeader* anim = ShipCrewPlayer_SelectNativeLadderRung(
+                player, sPilot.ladderStep | (sPilot.freeClimb ? 2 : 0), requested);
             player->skelAnime.prevRot = actor->shape.rot.y;
             const f32 last = static_cast<f32>(Animation_GetLastFrame(anim));
             sPilot.ladderDirection = requested;
@@ -714,6 +741,13 @@ bool Pilot_TryLadder(Player* player, PlayState* play, s16 approachYaw, bool enab
     if ((player->actor.bgCheckFlags & BGCHECKFLAG_GROUND) &&
         ShipCrewPlayer_QueryLadder(play, player, false, &anchor, &yaw, &bottomY, &topY, approachYaw)) {
         Pilot_BeginLadder(player, play, false, anchor, yaw, bottomY, topY);
+        return true;
+    }
+    // Free-climb vines share the native rung/root-motion path but select
+    // P1's original phase 2/3 clips and use ledge-up rather than ladder
+    // dismount at the top. Horizontal shimmy remains a later parity test.
+    if (ShipCrewPlayer_QueryNativeVine(play, player, approachYaw, &anchor, &yaw, &bottomY, &topY)) {
+        Pilot_BeginLadder(player, play, false, anchor, yaw, bottomY, topY, true);
         return true;
     }
     return false;
