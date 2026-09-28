@@ -381,8 +381,7 @@ void Pilot_BeginLadder(Player* player, PlayState* play, bool fromTop, const Vec3
     sPilot.ladderEntryStart = actor->world.pos;
     sPilot.ladderEntryGoal = anchor;
     if (fromTop)
-        sPilot.ladderEntryGoal.y =
-            actor->world.pos.y - std::min(8.0f, std::max(0.0f, (topY - bottomY) * 0.25f));
+        sPilot.ladderEntryGoal.y = actor->world.pos.y - std::min(8.0f, std::max(0.0f, (topY - bottomY) * 0.25f));
     sPilot.ladderTopEntry = actor->world.pos;
     sPilot.ladderYaw = yaw;
     sPilot.ladderBottomY = bottomY;
@@ -499,14 +498,13 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, f32 worldX, f32 worldZ,
             LinkAnimationHeader* anim = player->ageProperties->unk_AC[clipIndex];
             const f32 last = static_cast<f32>(Animation_GetLastFrame(anim));
             sPilot.ladderDirection = requested;
-            sPilot.ladderCycleSpeed =
-                std::clamp(std::fabs(along) * 4.0f, 1.0f, 3.35f) +
-                static_cast<f32>(CVarGetInteger(CVAR_ENHANCEMENT("ClimbSpeed"), 0));
+            sPilot.ladderCycleSpeed = std::clamp(std::fabs(along) * 4.0f, 1.0f, 3.35f) +
+                                      static_cast<f32>(CVarGetInteger(CVAR_ENHANCEMENT("ClimbSpeed"), 0));
             // These are P1's actual first/last root translations for each
             // alternate rung. The difference in animation roots determines
             // displacement; no estimated constant per-frame climb speed.
-            sPilot.ladderLastRootY = requested > 0 ? player->ageProperties->unk_4A[clipIndex].y
-                                                  : player->ageProperties->unk_62[clipIndex].y;
+            sPilot.ladderLastRootY =
+                requested > 0 ? player->ageProperties->unk_4A[clipIndex].y : player->ageProperties->unk_62[clipIndex].y;
             LinkAnimation_Change(play, &player->skelAnime, anim, requested * sPilot.ladderCycleSpeed,
                                  requested > 0 ? 0.0f : last, requested > 0 ? last : 0.0f, ANIMMODE_ONCE, 0.0f);
         }
@@ -575,8 +573,7 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, f32 worldX, f32 worldZ,
                     const f32 upperY = BgCheck_EntityRaycastFloor1(&play->colCtx, &upperFloor, &upperProbe);
                     if (upperFloor != nullptr &&
                         actor->world.pos.y >= upperY - std::max(15.0f, 22.0f * player->ageProperties->unk_08) &&
-                        actor->world.pos.y <= upperY + 25.0f &&
-                        upperY >= sPilot.ladderBottomY + 25.0f) {
+                        actor->world.pos.y <= upperY + 25.0f && upperY >= sPilot.ladderBottomY + 25.0f) {
                         landing = upperProbe;
                         landing.y = upperY;
                         foundTop = true;
