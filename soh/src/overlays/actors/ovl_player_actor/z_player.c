@@ -7992,6 +7992,9 @@ void ShipCrewPlayer_BeginNativeClimb(PlayState* play, Player* player, const Vec3
                   : (fromTop ? player->ageProperties->unk_A8 : player->ageProperties->unk_A4);
     Player_AnimPlayOnce(play, player, anim);
     Player_StartAnimMovement(play, player, 0x9F);
+    // The initial attachment frame also queues root translation in P1.
+    // Skipping it offsets P2's camera and ladder position by one frame.
+    ShipCrewPlayer_QueueNativeAnimMovement(play, player);
     AnimationContext_SetNextQueue(play);
     sControlInput = previousInput;
 }
