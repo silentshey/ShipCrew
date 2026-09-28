@@ -7804,6 +7804,7 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
     static PlayState* p2Play = NULL;
     static Player* p2Player = NULL;
     static f32 p2CrawlExitBlend = 0.0f;
+    static s32 lastP2CrawlExitForward = true;
     Player* player;
     View originalView;
     s32 originalOOBTimer;
@@ -7903,10 +7904,15 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
         s32 exitForward;
         f32 exitProgress;
         const s32 exiting = ShipCrewPilot_GetCrawlExitCamera(play, &exitForward, &exitProgress);
-        if (exiting)
+        if (exiting) {
+            lastP2CrawlExitForward = exitForward;
             p2CrawlExitBlend = CLAMP(p2CrawlExitBlend + 0.2f, 0.0f, 1.0f);
-        else
+        } else {
+            // Preserve the previous exit direction during the blend back
+            // into P2's regular camera; the pilot no longer supplies it.
+            exitForward = lastP2CrawlExitForward;
             p2CrawlExitBlend = CLAMP(p2CrawlExitBlend - 0.2f, 0.0f, 1.0f);
+        }
         if (p2CrawlExitBlend > 0.0f) {
             if (!exiting)
                 exitProgress = 1.0f;
