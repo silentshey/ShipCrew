@@ -1675,8 +1675,9 @@ void SohInputEditorWindow::DrawLinkTab() {
                                   "age-aware ledge probes, low/medium ledge steps, high-ledge jump "
                                   "startups and an independent hanging/climb animation state.\\n"
                                   "While hanging, press UP to climb or DOWN to drop. A also climbs. "
-                                  "No manual jump button. Ladders, swimming and other scripted "
-                                  "actions are not included. Use a test save.\\n"
+                                  "No manual jump button. Also enables experimental entry from both "
+                                  "ends of flagged ladders, independent UP/DOWN climbing and dismounts. "
+                                  "Swimming and scripted actions remain unsupported. Use a test save.\\n"
                                   "Disable to keep PR #16 movement behavior."));
 
         DrawPortMappings(portIndex);
