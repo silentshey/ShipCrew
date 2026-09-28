@@ -231,9 +231,11 @@ void Pilot_BeginJump(Player* player, f32 verticalSpeed) {
 // Native assets match P1's D_80853D4C directional hop table.
 LinkAnimationHeader* Pilot_DodgeAnim(PilotDodge dodge, bool landing) {
     if (dodge == PilotDodge::SideLeft)
-        return Pilot_Animation(landing ? gPlayerAnim_link_fighter_Lside_jump_endL : gPlayerAnim_link_fighter_Lside_jump);
+        return Pilot_Animation(landing ? gPlayerAnim_link_fighter_Lside_jump_endL
+                                       : gPlayerAnim_link_fighter_Lside_jump);
     if (dodge == PilotDodge::SideRight)
-        return Pilot_Animation(landing ? gPlayerAnim_link_fighter_Rside_jump_endR : gPlayerAnim_link_fighter_Rside_jump);
+        return Pilot_Animation(landing ? gPlayerAnim_link_fighter_Rside_jump_endR
+                                       : gPlayerAnim_link_fighter_Rside_jump);
     return Pilot_Animation(landing ? gPlayerAnim_link_fighter_backturn_jump_endR
                                    : gPlayerAnim_link_fighter_backturn_jump);
 }
@@ -490,7 +492,8 @@ bool Pilot_TryLadder(Player* player, PlayState* play, const OSContPad& pad, bool
         --sPilot.ladderCooldown;
     if (!enabled || !canAct || carryingBomb || !moving || sPilot.ledgeCooldownFrames > 0 || sPilot.ladderCooldown > 0 ||
         sPilot.rollFrames > 0 || sPilot.itemFrames > 0 || sPilot.lockedTarget != nullptr ||
-        sPilot.traversal != PilotTraversal::None || sPilot.dodge != PilotDodge::None || player->ageProperties == nullptr)
+        sPilot.traversal != PilotTraversal::None || sPilot.dodge != PilotDodge::None ||
+        player->ageProperties == nullptr)
         return false;
 
     Vec3f anchor = {};
@@ -938,8 +941,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         PilotDodge dodge = PilotDodge::None;
         if (nativeMovement && sPilot.lockedTarget != nullptr) {
             const Vec3f& focus = sPilot.lockedTarget->focus.pos;
-            const s16 facing = static_cast<s16>(std::atan2(focus.x - actor->world.pos.x,
-                                                           focus.z - actor->world.pos.z) * kRadiansToN64Angle);
+            const s16 facing = static_cast<s16>(std::atan2(focus.x - actor->world.pos.x, focus.z - actor->world.pos.z) *
+                                                kRadiansToN64Angle);
             const f32 forward = worldX * Math_SinS(facing) + worldZ * Math_CosS(facing);
             const f32 right = worldZ * Math_SinS(facing) - worldX * Math_CosS(facing);
             if (std::fabs(right) > std::fabs(forward) * 1.2f)
@@ -951,43 +954,44 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                 sPilot.dodgeLanding = false;
                 const bool side = dodge != PilotDodge::Backflip;
                 Pilot_BeginJump(player, side ? 3.5f : 5.8f);
-                const s16 angle = dodge == PilotDodge::Backflip ? static_cast<s16>(0x8000)
+                const s16 angle = dodge == PilotDodge::Backflip   ? static_cast<s16>(0x8000)
                                   : dodge == PilotDodge::SideLeft ? static_cast<s16>(0x4000)
-                                                                   : static_cast<s16>(-0x4000);
+                                                                  : static_cast<s16>(-0x4000);
                 sPilot.dodgeYaw = static_cast<s16>(facing + angle);
                 player->yaw = actor->world.rot.y = sPilot.dodgeYaw;
                 actor->shape.rot.y = facing;
                 actor->speedXZ = player->linearVelocity = side ? 8.5f : 6.0f;
                 LinkAnimationHeader* anim = Pilot_DodgeAnim(dodge, false);
-                LinkAnimation_Change(play, &player->skelAnime, anim, 1.0f, 0.0f,
-                                     Animation_GetLastFrame(anim), ANIMMODE_ONCE, -3.0f);
-                if (side) gSaveContext.ship.stats.count[COUNT_SIDEHOPS]++;
-                else gSaveContext.ship.stats.count[COUNT_BACKFLIPS]++;
+                LinkAnimation_Change(play, &player->skelAnime, anim, 1.0f, 0.0f, Animation_GetLastFrame(anim),
+                                     ANIMMODE_ONCE, -3.0f);
+                if (side)
+                    gSaveContext.ship.stats.count[COUNT_SIDEHOPS]++;
+                else
+                    gSaveContext.ship.stats.count[COUNT_BACKFLIPS]++;
             }
         }
         if (dodge == PilotDodge::None) {
-        sPilot.nativeRoll = nativeMovement;
-        sPilot.rollInvulnStarted = false;
-        sPilot.rollFrames = nativeMovement ? 30 : kRollFrames;
-        const f32 magnitude = 80.0f * std::min(inputLength, 1.0f);
-        const f32 speedCap = ShipCrewPlayer_GetRunSpeedLimit();
-        sPilot.rollSpeed =
-            nativeMovement
-                ? std::max(3.0f,
-                           ShipCrewPlayer_CalcGroundSpeedTarget(magnitude, speedCap, player->floorPitch, true) * 1.5f)
-                : kRollSpeed;
-        // P1 commits rolls to Link's existing facing, not a fresh
-        // camera-relative stick heading at the button-press frame.
-        sPilot.rollYaw =
-            nativeMovement ? actor->shape.rot.y : static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
-        sPilot.landingFrames = 0;
-        if (nativeMovement) {
-            // P1's roll starts at 1.25x playback and lasts through the
-            // animation's actual frame 20, not a hard-coded 20 physics ticks.
-            LinkAnimationHeader* roll = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_landing_roll);
-            LinkAnimation_PlayOnceSetSpeed(play, &player->skelAnime, roll, 1.25f);
-            gSaveContext.ship.stats.count[COUNT_ROLLS]++;
-        }
+            sPilot.nativeRoll = nativeMovement;
+            sPilot.rollInvulnStarted = false;
+            sPilot.rollFrames = nativeMovement ? 30 : kRollFrames;
+            const f32 magnitude = 80.0f * std::min(inputLength, 1.0f);
+            const f32 speedCap = ShipCrewPlayer_GetRunSpeedLimit();
+            sPilot.rollSpeed = nativeMovement ? std::max(3.0f, ShipCrewPlayer_CalcGroundSpeedTarget(
+                                                                   magnitude, speedCap, player->floorPitch, true) *
+                                                                   1.5f)
+                                              : kRollSpeed;
+            // P1 commits rolls to Link's existing facing, not a fresh
+            // camera-relative stick heading at the button-press frame.
+            sPilot.rollYaw =
+                nativeMovement ? actor->shape.rot.y : static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
+            sPilot.landingFrames = 0;
+            if (nativeMovement) {
+                // P1's roll starts at 1.25x playback and lasts through the
+                // animation's actual frame 20, not a hard-coded 20 physics ticks.
+                LinkAnimationHeader* roll = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_landing_roll);
+                LinkAnimation_PlayOnceSetSpeed(play, &player->skelAnime, roll, 1.25f);
+                gSaveContext.ship.stats.count[COUNT_ROLLS]++;
+            }
         }
     }
 
