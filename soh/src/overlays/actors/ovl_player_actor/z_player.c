@@ -5502,9 +5502,15 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
             end.z += dz * (radius + 16.0f);
         }
         if (!BgCheck_EntityLineTest1(&play->colCtx, &start, &end, &hit, &wall, true, false, false, true, &bgId) ||
-            wall == NULL || !(SurfaceType_GetWallFlags(&play->colCtx, wall, bgId) & WALL_FLAG_LADDER)) {
+            wall == NULL) {
             continue;
         }
+        const s32 wallFlags = SurfaceType_GetWallFlags(&play->colCtx, wall, bgId);
+        // OoT intentionally distinguishes a ladder's vertical surface
+        // from its upper entrance. Without LADDER_TOP P2 could never
+        // descend most ladders even when the top geometry was detected.
+        if (!(wallFlags & WALL_FLAG_LADDER) && !(fromTop && (wallFlags & WALL_FLAG_LADDER_TOP)))
+            continue;
         Vec3f vertices[3];
         CollisionPoly_GetVerticesByBgId(wall, bgId, &play->colCtx, vertices);
         f32 minY = vertices[0].y;
