@@ -1654,6 +1654,18 @@ void SohInputEditorWindow::DrawLinkTab() {
                                   "Pause, cutscene and prerender rooms remain single view; "
                                   "HUD is shared. Disable to use the tested single view."));
 
+        CVarCheckbox("ShipCrew: Native-Style P2 Movement + Animation Groups (Experimental)",
+                     CVAR_SETTING("ShipCrew.P2NativeLocomotion"),
+                     CheckboxOptions()
+                         .Color(THEME_COLOR)
+                         .Tooltip("Optional foundation for Player 2 movement parity. Reuses original "
+                                  "Link's analog speed curve, turn braking, acceleration, rolling speed, "
+                                  "age-specific collision checks and equipment-aware animation groups.\\n"
+                                  "Adds independent targeting strafe/backpedal animations. "
+                                  "Does not yet provide native auto-jumps, climbing, swimming, sword combat "
+                                  "or every scripted action; those require per-player action-state isolation.\\n"
+                                  "Disable to retain the previous tested P2 movement. Use a test save."));
+
         DrawPortMappings(portIndex);
 
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.133f, 0.133f, 0.133f, 1.0f));
