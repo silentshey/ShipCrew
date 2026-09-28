@@ -8152,7 +8152,10 @@ s32 ShipCrewPlayer_CanLiftContextActor(Actor* actor) {
         case ACTOR_EN_ISHI:
             return !((actor->params & 0xF) == 1 && Player_GetStrength() < PLAYER_STR_SILVER_G);
         case ACTOR_EN_KUSA:
-            return Player_GetStrength() > PLAYER_STR_NONE;
+            // En_Kusa_Main offers normal grass to original P1 regardless of
+            // Strength. The previous pilot-only check incorrectly blocked
+            // P2 grass interactions before the Goron Bracelet.
+            return true;
         case ACTOR_OBJ_TSUBO:
             return true;
         default:
