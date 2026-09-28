@@ -7772,10 +7772,7 @@ s32 Player_ActionHandler_2(Player* this, PlayState* play) {
                         Player_UseItem(play, this, ITEM_LAST_USED);
                     }
                 } else {
-                    s32 strength = Player_GetStrength();
-
-                    if ((interactedActor->id == ACTOR_EN_ISHI) && ((interactedActor->params & 0xF) == 1) &&
-                        (strength < PLAYER_STR_SILVER_G)) {
+                    if ((interactedActor->id == ACTOR_EN_ISHI) && !ShipCrewPlayer_CanLiftContextActor(interactedActor)) {
                         return 0;
                     }
 
@@ -7953,83 +7950,87 @@ void Player_SetupDismountLadder(Player* this, LinkAnimationHeader* anim, PlaySta
     LinkAnimation_PlayOnceSetSpeed(play, &this->skelAnime, anim, (4.0f / 3.0f));
 }
 
+// Geometry shared by the original P1 crawlspace gate and the local P2 pilot.
+// This is the native wall-polygon midpoint/alignment test, factored out
+// without reading sControlInput or the engine's global primary Player.
+s32 ShipCrewPlayer_QueryCrawlspace(PlayState* play, Player* player, Vec3f* outCenter) {
+    if (play == NULL || player == NULL || outCenter == NULL || player->actor.wallPoly == NULL) {
+        return false;
+    }
+    CollisionPoly* wallPoly = player->actor.wallPoly;
+    if (!(SurfaceType_GetWallFlags(&play->colCtx, wallPoly, player->actor.wallBgId) & WALL_FLAG_CRAWLSPACE)) {
+        return false;
+    }
+    Vec3f vertices[3];
+    CollisionPoly_GetVerticesByBgId(wallPoly, player->actor.wallBgId, &play->colCtx, vertices);
+    f32 minX = vertices[0].x;
+    f32 maxX = vertices[0].x;
+    f32 minZ = vertices[0].z;
+    f32 maxZ = vertices[0].z;
+    for (s32 i = 1; i < 3; ++i) {
+        if (minX > vertices[i].x) minX = vertices[i].x;
+        else if (maxX < vertices[i].x) maxX = vertices[i].x;
+        if (minZ > vertices[i].z) minZ = vertices[i].z;
+        else if (maxZ < vertices[i].z) maxZ = vertices[i].z;
+    }
+    const f32 centerX = (minX + maxX) * 0.5f;
+    const f32 centerZ = (minZ + maxZ) * 0.5f;
+    const f32 sideways = (player->actor.world.pos.x - centerX) * COLPOLY_GET_NORMAL(wallPoly->normal.z) -
+                         (player->actor.world.pos.z - centerZ) * COLPOLY_GET_NORMAL(wallPoly->normal.x);
+    outCenter->x = centerX;
+    outCenter->y = player->actor.world.pos.y;
+    outCenter->z = centerZ;
+    return fabsf(sideways) < 8.0f;
+}
+
 /**
  * @return true if Player chooses to enter crawlspace
  */
 s32 Player_TryEnteringCrawlspace(Player* this, PlayState* play, u32 interactWallFlags) {
     if (!LINK_IS_ADULT && !(this->stateFlags1 & PLAYER_STATE1_IN_WATER) && (interactWallFlags & WALL_FLAG_CRAWLSPACE)) {
-        CollisionPoly* wallPoly;
-        Vec3f wallVertices[3];
-        f32 xVertex1;
-        f32 xVertex2;
-        f32 zVertex1;
-        f32 zVertex2;
-        s32 i;
-
-        if (!GameInteractor_Should(VB_CRAWL, true)) {
+        Vec3f center;
+        if (!GameInteractor_Should(VB_CRAWL, true) || !ShipCrewPlayer_QueryCrawlspace(play, this, &center)) {
             return false;
         }
 
-        wallPoly = this->actor.wallPoly;
-        CollisionPoly_GetVerticesByBgId(wallPoly, this->actor.wallBgId, &play->colCtx, wallVertices);
+        // The original P1 button, camera and action sequencing is unchanged.
+        this->stateFlags2 |= PLAYER_STATE2_DO_ACTION_ENTER;
+        if (CHECK_BTN_ALL(sControlInput->press.button, BTN_A)) {
+            CollisionPoly* wallPoly = this->actor.wallPoly;
+            f32 wallPolyNormX = COLPOLY_GET_NORMAL(wallPoly->normal.x);
+            f32 wallPolyNormZ = COLPOLY_GET_NORMAL(wallPoly->normal.z);
+            f32 distToInteractWall = this->distToInteractWall;
 
-        // Determines min and max vertices for x & z (edges of the crawlspace hole)
-        xVertex1 = xVertex2 = wallVertices[0].x;
-        zVertex1 = zVertex2 = wallVertices[0].z;
-        for (i = 1; i < 3; i++) {
-            if (xVertex1 > wallVertices[i].x) {
-                // Update x min
-                xVertex1 = wallVertices[i].x;
-            } else if (xVertex2 < wallVertices[i].x) {
-                // Update x max
-                xVertex2 = wallVertices[i].x;
+            Player_SetupWaitForPutAway(play, this, func_8083A40C);
+            this->stateFlags2 |= PLAYER_STATE2_CRAWLING;
+            this->actor.shape.rot.y = this->yaw = this->actor.wallYaw + 0x8000;
+            this->actor.world.pos.x = center.x + (distToInteractWall * wallPolyNormX);
+            this->actor.world.pos.z = center.z + (distToInteractWall * wallPolyNormZ);
+            func_80832224(this);
+            this->actor.prevPos = this->actor.world.pos;
+            if (GameInteractor_Should(VB_CRAWL_SPEED_ENTER, true)) {
+                Player_AnimPlayOnce(play, this, &gPlayerAnim_link_child_tunnel_start);
             }
-
-            if (zVertex1 > wallVertices[i].z) {
-                // Update z min
-                zVertex1 = wallVertices[i].z;
-            } else if (zVertex2 < wallVertices[i].z) {
-                // Update z max
-                zVertex2 = wallVertices[i].z;
-            }
-        }
-
-        // XZ Center of the crawlspace hole
-        xVertex1 = (xVertex1 + xVertex2) * 0.5f;
-        zVertex1 = (zVertex1 + zVertex2) * 0.5f;
-
-        // Perpendicular (sideways) XZ-Distance from player pos to crawlspace line
-        // Uses y-component of crossproduct formula for the distance from a point to a line
-        xVertex2 = ((this->actor.world.pos.x - xVertex1) * COLPOLY_GET_NORMAL(wallPoly->normal.z)) -
-                   ((this->actor.world.pos.z - zVertex1) * COLPOLY_GET_NORMAL(wallPoly->normal.x));
-
-        if (fabsf(xVertex2) < 8.0f) {
-            // Give do-action prompt to "Enter on A" for the crawlspace
-            this->stateFlags2 |= PLAYER_STATE2_DO_ACTION_ENTER;
-
-            if (CHECK_BTN_ALL(sControlInput->press.button, BTN_A)) {
-                // Enter Crawlspace
-                f32 wallPolyNormX = COLPOLY_GET_NORMAL(wallPoly->normal.x);
-                f32 wallPolyNormZ = COLPOLY_GET_NORMAL(wallPoly->normal.z);
-                f32 distToInteractWall = this->distToInteractWall;
-
-                Player_SetupWaitForPutAway(play, this, func_8083A40C);
-                this->stateFlags2 |= PLAYER_STATE2_CRAWLING;
-                this->actor.shape.rot.y = this->yaw = this->actor.wallYaw + 0x8000;
-                this->actor.world.pos.x = xVertex1 + (distToInteractWall * wallPolyNormX);
-                this->actor.world.pos.z = zVertex1 + (distToInteractWall * wallPolyNormZ);
-                func_80832224(this);
-                this->actor.prevPos = this->actor.world.pos;
-                if (GameInteractor_Should(VB_CRAWL_SPEED_ENTER, true)) {
-                    Player_AnimPlayOnce(play, this, &gPlayerAnim_link_child_tunnel_start);
-                }
-                Player_StartAnimMovement(play, this, 0x9D);
-                return true;
-            }
+            Player_StartAnimMovement(play, this, 0x9D);
+            return true;
         }
     }
-
     return false;
+}
+
+// Native P1 strength rule factored for P2's independent context candidate scan.
+// Candidate selection still belongs to the relevant player's own interaction range.
+s32 ShipCrewPlayer_CanLiftContextActor(Actor* actor) {
+    if (actor == NULL) return false;
+    switch (actor->id) {
+        case ACTOR_EN_ISHI:
+            return !((actor->params & 0xF) == 1 && Player_GetStrength() < PLAYER_STR_SILVER_G);
+        case ACTOR_EN_KUSA:
+        case ACTOR_OBJ_TSUBO:
+            return true;
+        default:
+            return false;
+    }
 }
 
 s32 func_8083F360(PlayState* play, Player* this, f32 arg1, f32 arg2, f32 arg3, f32 arg4) {
