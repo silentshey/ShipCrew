@@ -5594,6 +5594,11 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
         // bottom ascent and sent upper-platform dismount probes backward.
         const s16 towardWall = side > 0.0f ? (s16)(Math_Atan2S(nz, nx) + 0x8000) : Math_Atan2S(nz, nx);
         *outFacing = fromTop ? (s16)(towardWall + 0x8000) : towardWall;
+        // Native P1's follow-wall action requires an owned wall polygon,
+        // background id, and the yaw derived from that polygon's normal.
+        player->actor.wallPoly = wall;
+        player->actor.wallBgId = bgId;
+        player->actor.wallYaw = Math_Atan2S(nz, nx);
         *outTopY = fromTop ? pos.y : maxY;
         *outBottomY = fromTop ? minY : pos.y;
         // For segmented ladder polygons there may be a lower ground floor
@@ -8018,7 +8023,9 @@ s32 ShipCrewPlayer_QueryNativeVine(PlayState* play, Player* player, s16 approach
     if (!BgCheck_EntityLineTest1(&play->colCtx, &from, &to, &hit, &wall, true, false, false, true, &bgId) ||
         wall == NULL || !(SurfaceType_GetWallFlags(&play->colCtx, wall, bgId) & WALL_FLAG_CLIMBABLE))
         return false;
-    const s16 faceWall = Math_Atan2S(-COLPOLY_GET_NORMAL(wall->normal.x), -COLPOLY_GET_NORMAL(wall->normal.z));
+    // Exact normal ordering in P1's func_8083F360: (-normal.z, -normal.x).
+    // The old reversed pair made certain free-climb walls appear sideways.
+    const s16 faceWall = Math_Atan2S(-COLPOLY_GET_NORMAL(wall->normal.z), -COLPOLY_GET_NORMAL(wall->normal.x));
     if (ABS((s16)(faceWall - approachYaw)) > 0x3000)
         return false;
     Vec3f verts[3];
@@ -8033,7 +8040,17 @@ s32 ShipCrewPlayer_QueryNativeVine(PlayState* play, Player* player, s16 approach
     }
     if (*outTopY < actor->world.pos.y + 12.0f)
         return false;
+    const f32 nx = COLPOLY_GET_NORMAL(wall->normal.x);
+    const f32 ny = COLPOLY_GET_NORMAL(wall->normal.y);
+    const f32 nz = COLPOLY_GET_NORMAL(wall->normal.z);
+    const f32 distance = Math3D_UDistPlaneToPos(nx, ny, nz, wall->dist, &actor->world.pos);
     *outAnchor = actor->world.pos;
+    // P1's climbable-wall attachment: native radius minus wall distance.
+    outAnchor->x += (player->ageProperties->wallCheckRadius - 1.0f - distance) * nx;
+    outAnchor->z += (player->ageProperties->wallCheckRadius - 1.0f - distance) * nz;
+    actor->wallPoly = wall;
+    actor->wallBgId = bgId;
+    actor->wallYaw = Math_Atan2S(wall->normal.z, wall->normal.x);
     *outFacing = faceWall;
     return true;
 }
