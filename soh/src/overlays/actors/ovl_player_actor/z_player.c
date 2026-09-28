@@ -5515,8 +5515,7 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
             end.x += dx * (radius + 18.0f);
             end.z += dz * (radius + 18.0f);
             end.y -= 100.0f;
-            found = BgCheck_EntityLineTest1(&play->colCtx, &start, &end, &hit, &wall, true, false, false,
-                                           true, &bgId);
+            found = BgCheck_EntityLineTest1(&play->colCtx, &start, &end, &hit, &wall, true, false, false, true, &bgId);
         }
         if ((!found || wall == NULL) && player->actor.wallPoly != NULL &&
             (player->actor.bgCheckFlags & BGCHECKFLAG_WALL)) {
