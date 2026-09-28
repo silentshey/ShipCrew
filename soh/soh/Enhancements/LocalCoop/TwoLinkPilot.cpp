@@ -936,10 +936,35 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                                                                                        : PLAYER_ANIMGROUP_short_landing)
                                    : Pilot_Animation(gPlayerAnim_link_normal_short_landing_free);
         mode = ANIMMODE_ONCE;
+    } else if (hostileLock) {
+        // The animation must follow the independent motion quadrant chosen
+        // from the target-relative stick vector. Comparing smoothed yaw with
+        // actor facing gave the wrong side (or a forward run) after camera
+        // movement, especially when locking onto a moving enemy.
+        if (!moving || actor->speedXZ < 0.15f) {
+            animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_wait);
+        } else {
+            switch (sPilot.lockMove) {
+                case PilotLockMove::Back:
+                    animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_back_walk);
+                    break;
+                case PilotLockMove::Left:
+                    animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_side_walkL);
+                    break;
+                case PilotLockMove::Right:
+                    animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_side_walkR);
+                    break;
+                default:
+                    animation = ShipCrewPlayer_GetGroupAnimation(player, running ? PLAYER_ANIMGROUP_run
+                                                                                 : PLAYER_ANIMGROUP_walk);
+                    break;
+            }
+            locomotionLoop = true;
+        }
     } else if (nativeMovement) {
         if (!moving || actor->speedXZ < 0.15f) {
             animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_wait);
-        } else if (sPilot.lockedTarget != nullptr || sPilot.parallelTargeting) {
+        } else if (sPilot.parallelTargeting) {
             const s16 facingDiff = player->yaw - actor->shape.rot.y;
             if (std::abs(static_cast<s32>(facingDiff)) >= 0x6000) {
                 animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_back_walk);
