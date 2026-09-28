@@ -46,6 +46,12 @@ s32 ShipCrewCamera_GetSplitOverlayProjection(PlayState* play, MtxF* out) {
     return true;
 }
 
+// Only replace equipped C-button HUDs on frames where both world viewports
+// actually rendered. Pause, cutscene and single-view UI stay vanilla.
+s32 ShipCrewCamera_IsSplitOverlayActive(PlayState* play) {
+    return sShipCrewSplitDrawActive && play != NULL && play == gPlayState;
+}
+
 s16 firstInit = 0;
 
 // ShipCrew local co-op's opt-in split render bridge. Unlike subcameras used
