@@ -5351,6 +5351,106 @@ s32 Player_PosVsWallLineTest(PlayState* play, Player* this, Vec3f* offset, Colli
     return BgCheck_EntityLineTest1(&play->colCtx, &posA, &posB, posResult, wallPoly, true, false, false, true, bgId);
 }
 
+// ShipCrew P2 collision query, split out from Player_ProcessSceneCollision.
+// Reuse the original wall/floor/ceiling and age-specific ledge rules, but
+// return the result instead of updating P1-only file-static action state.
+// This is a query: it never changes a player, scene, camera or save.
+s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* outRise, Vec3f* outStand, s16* outFacing) {
+    if (play == NULL || player == NULL || player->ageProperties == NULL || outRise == NULL || outStand == NULL ||
+        outFacing == NULL || GameInteractor_GetDisableLedgeGrabsActive()) {
+        return PLAYER_LEDGE_CLIMB_NONE;
+    }
+
+    Actor* actor = &player->actor;
+    PlayerAgeProperties* age = player->ageProperties;
+    if (player->stateFlags1 & (PLAYER_STATE1_CARRYING_ACTOR | PLAYER_STATE1_IN_WATER | PLAYER_STATE1_IN_CUTSCENE)) {
+        return PLAYER_LEDGE_CLIMB_NONE;
+    }
+
+    const f32 forwardX = Math_SinS(player->yaw);
+    const f32 forwardZ = Math_CosS(player->yaw);
+    Vec3f start = actor->world.pos;
+    start.y += 18.0f;
+    Vec3f end = start;
+    end.x += forwardX * (age->wallCheckRadius + 10.0f);
+    end.z += forwardZ * (age->wallCheckRadius + 10.0f);
+
+    CollisionPoly* wallPoly = NULL;
+    Vec3f hit;
+    s32 wallBgId;
+    if (!BgCheck_EntityLineTest1(&play->colCtx, &start, &end, &hit, &wallPoly, true, false, false, true,
+                                 &wallBgId) ||
+        wallPoly == NULL || !GameInteractor_Should(VB_SURFACE_ANGLE_IS_CLIMBABLE, ABS(wallPoly->normal.y) < 600) ||
+        func_80041DE4(&play->colCtx, wallPoly, wallBgId) != 0) {
+        return PLAYER_LEDGE_CLIMB_NONE;
+    }
+
+    const f32 nx = COLPOLY_GET_NORMAL(wallPoly->normal.x);
+    const f32 ny = COLPOLY_GET_NORMAL(wallPoly->normal.y);
+    const f32 nz = COLPOLY_GET_NORMAL(wallPoly->normal.z);
+    // Only climb walls P2 is actually moving into, never sideways while
+    // strafing with an enemy locked on.
+    if (nx * forwardX + nz * forwardZ > -0.65f) {
+        return PLAYER_LEDGE_CLIMB_NONE;
+    }
+    const f32 wallDistance = Math3D_UDistPlaneToPos(nx, ny, nz, wallPoly->dist, &actor->world.pos);
+    if (wallDistance > age->wallCheckRadius + 10.0f) {
+        return PLAYER_LEDGE_CLIMB_NONE;
+    }
+
+    Vec3f ledgePos = actor->world.pos;
+    ledgePos.x -= (wallDistance + 10.0f) * nx;
+    ledgePos.z -= (wallDistance + 10.0f) * nz;
+    ledgePos.y += age->unk_0C;
+    CollisionPoly* ledgeFloor = NULL;
+    const f32 ledgeY = BgCheck_EntityRaycastFloor1(&play->colCtx, &ledgeFloor, &ledgePos);
+    const f32 rise = ledgeY - actor->world.pos.y;
+    if (ledgeFloor == NULL || ABS(ledgeFloor->normal.y) <= 28000 || rise < 18.0f ||
+        rise > age->unk_0C + 1.0f) {
+        return PLAYER_LEDGE_CLIMB_NONE;
+    }
+
+    f32 ceilingY;
+    CollisionPoly* ceilingPoly = NULL;
+    s32 ceilingBgId;
+    if (BgCheck_EntityCheckCeiling(&play->colCtx, &ceilingY, &actor->world.pos, rise + 20.0f, &ceilingPoly,
+                                   &ceilingBgId, actor)) {
+        return PLAYER_LEDGE_CLIMB_NONE;
+    }
+
+    // Vanilla's second head-height wall test rejects obstructions over the
+    // prospective ledge surface. This avoids teleporting P2 into geometry.
+    Vec3f highStart = actor->world.pos;
+    highStart.y = ledgeY + 5.0f;
+    Vec3f highEnd = highStart;
+    highEnd.x += forwardX * (wallDistance + 10.0f);
+    highEnd.z += forwardZ * (wallDistance + 10.0f);
+    CollisionPoly* highWall = NULL;
+    Vec3f highHit;
+    s32 highBgId;
+    if (BgCheck_EntityLineTest1(&play->colCtx, &highStart, &highEnd, &highHit, &highWall, true, false, false, true,
+                                 &highBgId) &&
+        highWall != NULL && ABS((s16)(Math_Atan2S(highWall->normal.z, highWall->normal.x) -
+                                     Math_Atan2S(wallPoly->normal.z, wallPoly->normal.x))) < 0x4000 &&
+        !func_80041E18(&play->colCtx, highWall, highBgId)) {
+        return PLAYER_LEDGE_CLIMB_NONE;
+    }
+
+    outStand->x = actor->world.pos.x - (wallDistance + 0.5f) * nx;
+    outStand->y = ledgeY;
+    outStand->z = actor->world.pos.z - (wallDistance + 0.5f) * nz;
+    *outRise = rise;
+    *outFacing = (s16)(Math_Atan2S(nz, nx) + 0x8000);
+
+    if (rise < age->unk_1C) {
+        return PLAYER_LEDGE_CLIMB_1;
+    }
+    if (rise >= age->unk_14) {
+        return PLAYER_LEDGE_CLIMB_4;
+    }
+    return rise >= age->unk_18 ? PLAYER_LEDGE_CLIMB_3 : PLAYER_LEDGE_CLIMB_2;
+}
+
 s32 Player_ActionHandler_1(Player* this, PlayState* play) {
     DoorShutter* doorShutter;
     EnDoor* door; // Can also be DoorKiller*
