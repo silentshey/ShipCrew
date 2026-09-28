@@ -1157,9 +1157,6 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     Actor* heldBomb = Pilot_FindHeldBomb(actor, play);
     // The original action button releases a carried bomb first. Otherwise A
     // rolls while running; there is no manual A-button jump.
-    const bool nativeMovement = CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0;
-    const bool nativeTraversal = nativeMovement && CVarGetInteger(SHIPCREW_NATIVE_TRAVERSAL_CVAR, 0) != 0;
-
     // Prevent combat from stealing a ladder, crawlspace or carried prop.
     const bool combatFree = canAct && nativeCombat && wasGrounded && heldBomb == nullptr &&
                             carriedProp == nullptr && sPilot.pickupCandidate == nullptr &&
@@ -1760,6 +1757,9 @@ void Pilot_Draw(Actor* actor, PlayState* play) {
 }
 
 void Pilot_Destroy(Actor* actor, PlayState* play) {
+    const bool nativeMovement = CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0;
+    const bool nativeTraversal = nativeMovement && CVarGetInteger(SHIPCREW_NATIVE_TRAVERSAL_CVAR, 0) != 0;
+
     Actor* carriedProp = Pilot_LiveProp(play, sPilot.carriedProp);
     if (carriedProp != nullptr && carriedProp->parent == actor)
         Pilot_DetachProp(reinterpret_cast<Player*>(actor), carriedProp, false);
