@@ -29,8 +29,8 @@ f32 ShipCrewPlayer_GetRunSpeedLimit(void);
 void ShipCrewPlayer_ApplyNativeRunMotion(Player* player, f32 speedTarget, s16 yawTarget);
 f32 ShipCrewPlayer_CalcGroundSpeedTarget(f32 magnitude, f32 speedCap, s16 floorPitch, s32 curved);
 s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* rise, Vec3f* stand, s16* facing);
-s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec3f* anchor, s16* facing,
-                               f32* bottomY, f32* topY);
+s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec3f* anchor, s16* facing, f32* bottomY,
+                               f32* topY);
 }
 
 // The experimental switch lives in the existing Controls settings screen.
@@ -462,13 +462,13 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, const OSContPad& pad, b
     return true;
 }
 
-bool Pilot_TryLadder(Player* player, PlayState* play, const OSContPad& pad, bool enabled, bool canAct,
-                     bool moving, bool carryingBomb) {
+bool Pilot_TryLadder(Player* player, PlayState* play, const OSContPad& pad, bool enabled, bool canAct, bool moving,
+                     bool carryingBomb) {
     if (sPilot.ladderCooldown > 0)
         --sPilot.ladderCooldown;
-    if (!enabled || !canAct || carryingBomb || !moving || sPilot.ledgeCooldownFrames > 0 ||
-        sPilot.ladderCooldown > 0 || sPilot.rollFrames > 0 || sPilot.itemFrames > 0 ||
-        sPilot.lockedTarget != nullptr || sPilot.traversal != PilotTraversal::None || player->ageProperties == nullptr)
+    if (!enabled || !canAct || carryingBomb || !moving || sPilot.ledgeCooldownFrames > 0 || sPilot.ladderCooldown > 0 ||
+        sPilot.rollFrames > 0 || sPilot.itemFrames > 0 || sPilot.lockedTarget != nullptr ||
+        sPilot.traversal != PilotTraversal::None || player->ageProperties == nullptr)
         return false;
 
     Vec3f anchor = {};
@@ -477,8 +477,7 @@ bool Pilot_TryLadder(Player* player, PlayState* play, const OSContPad& pad, bool
     f32 topY = 0.0f;
     // Prefer the requested top descent: from ground directly above an
     // actual flagged ladder, P2 can press DOWN without falling first.
-    if (pad.stick_y < -25 &&
-        ShipCrewPlayer_QueryLadder(play, player, true, &anchor, &yaw, &bottomY, &topY)) {
+    if (pad.stick_y < -25 && ShipCrewPlayer_QueryLadder(play, player, true, &anchor, &yaw, &bottomY, &topY)) {
         Pilot_BeginLadder(player, play, true, anchor, yaw, bottomY, topY);
         return true;
     }
@@ -928,8 +927,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         if (nativeMovement) {
             // P1's roll starts at 1.25x playback and lasts through the
             // animation's actual frame 20, not a hard-coded 20 physics ticks.
-            LinkAnimationHeader* roll =
-                ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_landing_roll);
+            LinkAnimationHeader* roll = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_landing_roll);
             LinkAnimation_PlayOnceSetSpeed(play, &player->skelAnime, roll, 1.25f);
             gSaveContext.ship.stats.count[COUNT_ROLLS]++;
         }
@@ -992,10 +990,9 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                 // curved stick speed * 1.5, minimum 3, original run step,
                 // and movement fixed to Link's roll-facing yaw.
                 if (player->skelAnime.curFrame < 20.0f) {
-                    const f32 rollTarget =
-                        std::max(3.0f, ShipCrewPlayer_CalcGroundSpeedTarget(
-                                           stickMagnitude, speedLimit, player->floorPitch, true) *
-                                           1.5f);
+                    const f32 rollTarget = std::max(3.0f, ShipCrewPlayer_CalcGroundSpeedTarget(
+                                                              stickMagnitude, speedLimit, player->floorPitch, true) *
+                                                              1.5f);
                     ShipCrewPlayer_ApplyNativeRunMotion(player, rollTarget, sPilot.rollYaw);
                 } else {
                     Math_StepToF(&player->linearVelocity, 0.0f, REG(43) / 100.0f);
@@ -1242,7 +1239,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                 Player_SetInvulnerability(player, -10);
                 sPilot.rollInvulnStarted = true;
             }
-            if (player->skelAnime.curFrame >= 20.0f || player->skelAnime.animation !=
+            if (player->skelAnime.curFrame >= 20.0f ||
+                player->skelAnime.animation !=
                     ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_landing_roll)) {
                 sPilot.nativeRoll = false;
                 sPilot.rollFrames = 0;
