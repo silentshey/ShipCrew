@@ -30,7 +30,7 @@ void ShipCrewPlayer_ApplyNativeRunMotion(Player* player, f32 speedTarget, s16 ya
 f32 ShipCrewPlayer_CalcGroundSpeedTarget(f32 magnitude, f32 speedCap, s16 floorPitch, s32 curved);
 s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* rise, Vec3f* stand, s16* facing);
 s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec3f* anchor, s16* facing, f32* bottomY,
-                               f32* topY);
+                               f32* topY, s16 approachYaw);
 }
 
 // The experimental switch lives in the existing Controls settings screen.
@@ -84,6 +84,7 @@ struct PilotRuntime {
     PilotLockMove lockMove = PilotLockMove::None;
     bool parallelTargeting = false;
     int parallelRecenterFrames = 0;
+    s16 parallelFacing = 0; // Independent P2 no-enemy Z facing, never P1's global parallelYaw.
     // Derive rising edges from port 2's current buttons. Some controller
     // mappings can repeatedly report press bits while a button is held;
     // a button must become fully released before another item action.
@@ -91,6 +92,7 @@ struct PilotRuntime {
     int itemDebounceFrames = 0;
     int rollFrames = 0;
     bool nativeRoll = false;
+    int rollRecoveryFrames = 0;
     PilotDodge dodge = PilotDodge::None;
     bool dodgeLanding = false;
     s16 dodgeYaw = 0;
@@ -106,13 +108,22 @@ struct PilotRuntime {
     f32 takeoffY = 0.0f;
     f32 ledgeRise = 0.0f;
     Vec3f ledgeStand = {};
+    Vec3f hangAnchor = {};
+    Vec3f climbStart = {};
     s16 ledgeFacing = 0;
     PilotTraversal traversal = PilotTraversal::None;
     PilotLadder ladder = PilotLadder::None;
     int ladderStep = 0;
-    int ladderDirection = 0;
+    int ladderDirection = 0; // Current committed rung: finish before reversing or releasing.
+    bool ladderTopAwaitNeutral = false;
+    f32 ladderCycleSpeed = 1.0f;
+    f32 ladderLastRootY = 0.0f;
     int ladderCooldown = 0;
     Vec3f ladderAnchor = {};
+    Vec3f ladderEntryStart = {};
+    Vec3f ladderEntryGoal = {};
+    Vec3f ladderDismountStart = {};
+    Vec3f ladderDismountGoal = {};
     Vec3f ladderTopEntry = {};
     s16 ladderYaw = 0;
     f32 ladderTopY = 0.0f;
@@ -186,9 +197,14 @@ void Pilot_BeginClimb(Player* player, PlayState* play, s32 type, bool fromHang) 
     if (player->ageProperties == nullptr)
         return;
 
-    const f32 rise = fromHang ? sPilot.ledgeRise : sPilot.ledgeStand.y - actor->world.pos.y;
-    actor->world.pos = sPilot.ledgeStand;
-    actor->prevPos = actor->world.pos; // Climb starts at the destination with a visual vertical offset.
+    // P1 climbs with animation movement. Starting P2 at the FINAL ledge
+    // position was instantly teleporting the actor and its native camera,
+    // while the visual model was held down with a huge shape.yOffset.
+    // Keep both at the real starting anchor and advance through the animation.
+    sPilot.climbStart = actor->world.pos;
+    SPDLOG_INFO("[ShipCrew] P2 climb: fromHang={} startY={} targetY={}", fromHang, sPilot.climbStart.y,
+                sPilot.ledgeStand.y);
+    actor->prevPos = actor->world.pos;
     actor->velocity.y = 0.0f;
     actor->speedXZ = player->linearVelocity = 0.0f;
     actor->gravity = 0.0f;
@@ -197,17 +213,14 @@ void Pilot_BeginClimb(Player* player, PlayState* play, s32 type, bool fromHang) 
     player->stateFlags1 &= ~PLAYER_STATE1_HANGING_OFF_LEDGE;
     player->stateFlags1 |= PLAYER_STATE1_CLIMBING_LEDGE | PLAYER_STATE1_JUMPING;
 
+    actor->shape.yOffset = 0.0f;
     LinkAnimationHeader* animation;
-    if (fromHang) {
+    if (fromHang)
         animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_jump_climb_up);
-        actor->shape.yOffset -= rise * 100.0f;
-    } else if (type == PLAYER_LEDGE_CLIMB_3) {
+    else if (type == PLAYER_LEDGE_CLIMB_3)
         animation = Pilot_Animation(gPlayerAnim_link_normal_150step_up);
-        actor->shape.yOffset -= (rise - 59.0f * player->ageProperties->unk_08) * 100.0f;
-    } else {
+    else
         animation = Pilot_Animation(gPlayerAnim_link_normal_100step_up);
-        actor->shape.yOffset -= (rise - 41.0f * player->ageProperties->unk_08) * 100.0f;
-    }
 
     sPilot.traversal = PilotTraversal::Climbing;
     sPilot.ledgeCooldownFrames = 18;
@@ -217,7 +230,7 @@ void Pilot_BeginClimb(Player* player, PlayState* play, s32 type, bool fromHang) 
 
 void Pilot_BeginJump(Player* player, f32 verticalSpeed) {
     Actor* actor = &player->actor;
-    actor->gravity = kPilotGravity;
+    actor->gravity = sPilot.lockedTarget != nullptr ? -1.2f : kPilotGravity;
     actor->velocity.y = verticalSpeed;
     actor->bgCheckFlags &= ~BGCHECKFLAG_GROUND;
     player->stateFlags1 |= PLAYER_STATE1_JUMPING;
@@ -247,8 +260,12 @@ void Pilot_BeginHang(Player* player, PlayState* play, f32 rise, const Vec3f& sta
     sPilot.ledgeRise = rise;
     sPilot.traversal = PilotTraversal::Hanging;
     sPilot.ledgeCooldownFrames = 12;
-    actor->world.pos = stand;
-    actor->prevPos = actor->world.pos; // Do not interpolate across a newly grabbed ledge.
+    // 'stand' is the TOP of the wall, not the hanging location. Preserve
+    // physical hanging height instead of snapping P2/camera upwards.
+    actor->world.pos.x = stand.x;
+    actor->world.pos.z = stand.z;
+    sPilot.hangAnchor = actor->world.pos;
+    actor->prevPos = actor->world.pos;
     actor->shape.rot.y = actor->world.rot.y = player->yaw = facing;
     actor->velocity.y = actor->speedXZ = player->linearVelocity = 0.0f;
     actor->gravity = 0.0f;
@@ -277,7 +294,8 @@ bool Pilot_UpdateTraversal(Player* player, PlayState* play, const OSContPad& pad
     actor->velocity.y = 0.0f;
     actor->gravity = 0.0f;
     if (sPilot.traversal == PilotTraversal::Hanging) {
-        actor->world.pos = sPilot.ledgeStand;
+        actor->world.pos = sPilot.hangAnchor;
+        actor->prevPos = actor->world.pos;
         if (pad.stick_y > 25 || (pressed & BTN_A)) {
             Pilot_BeginClimb(player, play, PLAYER_LEDGE_CLIMB_3, true);
         } else if (pad.stick_y < -25) {
@@ -307,17 +325,28 @@ bool Pilot_UpdateTraversal(Player* player, PlayState* play, const OSContPad& pad
         }
     } else if (sPilot.traversal == PilotTraversal::Climbing) {
         const bool finished = LinkAnimation_Update(play, &player->skelAnime) != 0;
-        if (player->skelAnime.curFrame > 5.0f) {
-            // Resolve the entire temporary visual climb offset by the end
-            // of the native animation instead of snapping thousands of units.
-            const f32 framesLeft = std::max(1.0f, player->skelAnime.endFrame - player->skelAnime.curFrame);
-            Math_StepToF(&actor->shape.yOffset, 0.0f, std::max(150.0f, std::fabs(actor->shape.yOffset) / framesLeft));
-        }
+        const f32 end = std::max(1.0f, player->skelAnime.endFrame);
+        const f32 t = finished ? 1.0f : std::clamp(player->skelAnime.curFrame / end, 0.0f, 1.0f);
+        // Advance the actual actor/camera over the climbing animation rather
+        // than placing the actor at the destination before the climb begins.
+        // A smooth start/stop avoids a second spike at the transition.
+        const f32 progress = t * t * (3.0f - 2.0f * t);
+        actor->prevPos = actor->world.pos;
+        actor->world.pos.x = sPilot.climbStart.x + (sPilot.ledgeStand.x - sPilot.climbStart.x) * progress;
+        actor->world.pos.y = sPilot.climbStart.y + (sPilot.ledgeStand.y - sPilot.climbStart.y) * progress;
+        actor->world.pos.z = sPilot.climbStart.z + (sPilot.ledgeStand.z - sPilot.climbStart.z) * progress;
+        // The skeleton has baked-in root translation. During isolated P2
+        // movement the world actor, not both world + root, owns displacement.
+        player->skelAnime.jointTable[0] = player->skelAnime.baseTransl;
         if (finished) {
+            actor->world.pos = sPilot.ledgeStand;
             Pilot_ClearTraversal(actor, player);
             sPilot.landingFrames = kLandingFrames;
             sPilot.ledgeCooldownFrames = 20;
-            return false;
+            // Don't integrate a SECOND gravity/movement step on the frame
+            // the climb completes: normal physics resumes next update.
+            Actor_SetFocus(actor, 40.0f);
+            return true;
         }
     }
 
@@ -335,8 +364,10 @@ bool Pilot_UpdateTraversal(Player* player, PlayState* play, const OSContPad& pad
 void Pilot_ClearLadder(Player* player) {
     sPilot.ladder = PilotLadder::None;
     sPilot.ladderDirection = 0;
+    sPilot.ladderTopAwaitNeutral = false;
     sPilot.ladderCooldown = 16;
     player->stateFlags1 &= ~PLAYER_STATE1_CLIMBING_LADDER;
+    player->stateFlags2 &= ~PLAYER_STATE2_STATIONARY_LADDER;
     player->actor.gravity = kPilotGravity;
     player->actor.shape.yOffset = 0.0f;
 }
@@ -345,16 +376,23 @@ void Pilot_BeginLadder(Player* player, PlayState* play, bool fromTop, const Vec3
                        f32 topY) {
     Actor* actor = &player->actor;
     sPilot.ladder = fromTop ? PilotLadder::EnterTop : PilotLadder::EnterBottom;
+    SPDLOG_INFO("[ShipCrew] P2 ladder attached: fromTop={} bottomY={} topY={}", fromTop, bottomY, topY);
     sPilot.ladderAnchor = anchor;
+    sPilot.ladderEntryStart = actor->world.pos;
+    sPilot.ladderEntryGoal = anchor;
+    if (fromTop)
+        sPilot.ladderEntryGoal.y = actor->world.pos.y - std::min(8.0f, std::max(0.0f, (topY - bottomY) * 0.25f));
     sPilot.ladderTopEntry = actor->world.pos;
     sPilot.ladderYaw = yaw;
     sPilot.ladderBottomY = bottomY;
     sPilot.ladderTopY = topY;
     sPilot.ladderStep = 0;
     sPilot.ladderDirection = 0;
-    actor->world.pos.x = anchor.x;
-    actor->world.pos.z = anchor.z;
-    actor->prevPos = actor->world.pos; // Ladder attachment is an explicit position correction.
+    sPilot.ladderTopAwaitNeutral = fromTop;
+    sPilot.ladderCycleSpeed = 1.0f;
+    // P1 moves into its attachment animation. Don't warp P2/camera to
+    // the ladder before the first animation frame.
+    actor->prevPos = actor->world.pos;
     actor->velocity.y = actor->speedXZ = player->linearVelocity = 0.0f;
     actor->gravity = 0.0f;
     actor->world.rot.y = actor->shape.rot.y = player->yaw = yaw;
@@ -367,11 +405,16 @@ void Pilot_BeginLadder(Player* player, PlayState* play, bool fromTop, const Vec3
 
 void Pilot_LadderDismount(Player* player, PlayState* play, bool atTop, const Vec3f& landing) {
     Actor* actor = &player->actor;
-    actor->world.pos = landing;
-    actor->prevPos = actor->world.pos; // Prevent visual rewind after top/bottom dismount.
+    // The original P2 implementation snapped immediately to the
+    // platform before playing the dismount animation; the physical P2
+    // camera snapped with it. Move to the verified floor during the clip.
+    sPilot.ladderDismountStart = actor->world.pos;
+    sPilot.ladderDismountGoal = landing;
+    actor->prevPos = actor->world.pos;
     actor->velocity.y = actor->speedXZ = player->linearVelocity = 0.0f;
     actor->gravity = 0.0f;
-    actor->bgCheckFlags |= BGCHECKFLAG_GROUND;
+    SPDLOG_INFO("[ShipCrew] P2 ladder dismount: atTop={} fromY={} toY={}", atTop, sPilot.ladderDismountStart.y,
+                landing.y);
     LinkAnimationHeader* anim = atTop ? player->ageProperties->unk_CC[sPilot.ladderStep & 1]
                                       : player->ageProperties->unk_C4[sPilot.ladderStep & 1];
     sPilot.ladder = atTop ? PilotLadder::DismountTop : PilotLadder::DismountBottom;
@@ -382,7 +425,7 @@ void Pilot_LadderDismount(Player* player, PlayState* play, bool atTop, const Vec
 
 // Runs before ordinary movement so climbing never receives an independent
 // gravity step, stale roll animation or a second ammo transaction.
-bool Pilot_UpdateLadder(Player* player, PlayState* play, const OSContPad& pad, bool canAct) {
+bool Pilot_UpdateLadder(Player* player, PlayState* play, f32 worldX, f32 worldZ, bool canAct) {
     if (sPilot.ladder == PilotLadder::None)
         return false;
     Actor* actor = &player->actor;
@@ -397,42 +440,97 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, const OSContPad& pad, b
     actor->world.rot.y = actor->shape.rot.y = player->yaw = sPilot.ladderYaw;
     player->stateFlags1 |= PLAYER_STATE1_CLIMBING_LADDER;
     if (sPilot.ladder == PilotLadder::EnterTop || sPilot.ladder == PilotLadder::EnterBottom) {
-        const bool enteringFromTop = sPilot.ladder == PilotLadder::EnterTop;
-        if (LinkAnimation_Update(play, &player->skelAnime)) {
+        const bool finished = LinkAnimation_Update(play, &player->skelAnime) != 0;
+        const f32 t =
+            finished ? 1.0f
+                     : std::clamp(player->skelAnime.curFrame / std::max(1.0f, player->skelAnime.endFrame), 0.0f, 1.0f);
+        const f32 progress = t * t * (3.0f - 2.0f * t);
+        actor->world.pos.x =
+            sPilot.ladderEntryStart.x + (sPilot.ladderEntryGoal.x - sPilot.ladderEntryStart.x) * progress;
+        actor->world.pos.y =
+            sPilot.ladderEntryStart.y + (sPilot.ladderEntryGoal.y - sPilot.ladderEntryStart.y) * progress;
+        actor->world.pos.z =
+            sPilot.ladderEntryStart.z + (sPilot.ladderEntryGoal.z - sPilot.ladderEntryStart.z) * progress;
+        if (finished) {
             sPilot.ladder = PilotLadder::Active;
             sPilot.ladderDirection = 0;
-            if (enteringFromTop)
-                actor->world.pos.y -= 2.0f;
         }
     } else if (sPilot.ladder == PilotLadder::DismountTop || sPilot.ladder == PilotLadder::DismountBottom) {
-        if (LinkAnimation_Update(play, &player->skelAnime))
+        const bool finished = LinkAnimation_Update(play, &player->skelAnime) != 0;
+        const f32 t =
+            finished ? 1.0f
+                     : std::clamp(player->skelAnime.curFrame / std::max(1.0f, player->skelAnime.endFrame), 0.0f, 1.0f);
+        const f32 progress = t * t * (3.0f - 2.0f * t);
+        actor->world.pos.x =
+            sPilot.ladderDismountStart.x + (sPilot.ladderDismountGoal.x - sPilot.ladderDismountStart.x) * progress;
+        actor->world.pos.y =
+            sPilot.ladderDismountStart.y + (sPilot.ladderDismountGoal.y - sPilot.ladderDismountStart.y) * progress;
+        actor->world.pos.z =
+            sPilot.ladderDismountStart.z + (sPilot.ladderDismountGoal.z - sPilot.ladderDismountStart.z) * progress;
+        if (finished) {
+            actor->world.pos = sPilot.ladderDismountGoal;
+            // Reacquire real floor state before ordinary P2 physics resumes:
+            // a synthetic ground bit alone can leave P2 floating or falling
+            // on the next frame after the dismount animation.
+            Actor_UpdateBgCheckInfo(play, actor, 26.0f, 6.0f, player->ageProperties->ceilingCheckHeight, 7);
+            actor->bgCheckFlags |= BGCHECKFLAG_GROUND;
             Pilot_ClearLadder(player);
+        }
     } else {
-        const int direction = pad.stick_y > 23 ? 1 : (pad.stick_y < -23 ? -1 : 0);
+        // The P2 camera can face a different direction from P1's and rotate
+        // during ladder entry. Project independent WORLD stick movement onto
+        // P2's own ladder facing, not raw controller stick_y.
+        const f32 along = worldX * Math_SinS(sPilot.ladderYaw) + worldZ * Math_CosS(sPilot.ladderYaw);
+        int requested = along > 0.29f ? 1 : (along < -0.29f ? -1 : 0);
+        if (sPilot.ladderTopAwaitNeutral) {
+            // Entering from above can rotate P2's camera while the same
+            // held stick suddenly projects as UP. Require release or
+            // an explicit DOWN input before climbing back out.
+            if (requested <= 0)
+                sPilot.ladderTopAwaitNeutral = false;
+            else
+                requested = 0;
+        }
+        if (sPilot.ladderDirection == 0 && requested != 0) {
+            // Match P1: alternate age-specific left/right rung assets,
+            // selecting the opposite phase when descending.
+            const int clipIndex = (sPilot.ladderStep & 1) ^ (requested < 0 ? 1 : 0);
+            LinkAnimationHeader* anim = player->ageProperties->unk_AC[clipIndex];
+            const f32 last = static_cast<f32>(Animation_GetLastFrame(anim));
+            sPilot.ladderDirection = requested;
+            sPilot.ladderCycleSpeed = std::clamp(std::fabs(along) * 4.0f, 1.0f, 3.35f) +
+                                      static_cast<f32>(CVarGetInteger(CVAR_ENHANCEMENT("ClimbSpeed"), 0));
+            // These are P1's actual first/last root translations for each
+            // alternate rung. The difference in animation roots determines
+            // displacement; no estimated constant per-frame climb speed.
+            sPilot.ladderLastRootY =
+                requested > 0 ? player->ageProperties->unk_4A[clipIndex].y : player->ageProperties->unk_62[clipIndex].y;
+            LinkAnimation_Change(play, &player->skelAnime, anim, requested * sPilot.ladderCycleSpeed,
+                                 requested > 0 ? 0.0f : last, requested > 0 ? last : 0.0f, ANIMMODE_ONCE, 0.0f);
+        }
+        const int direction = sPilot.ladderDirection;
         if (direction == 0) {
-            // Hold on the ladder at the current animation frame.
             player->stateFlags2 |= PLAYER_STATE2_STATIONARY_LADDER;
         } else {
-            const f32 stickSpeed = std::clamp(std::fabs(static_cast<f32>(pad.stick_y)) * 0.05f, 1.0f, 3.35f);
-            const f32 climbSpeed = stickSpeed + CVarGetInteger(CVAR_ENHANCEMENT("ClimbSpeed"), 0);
-            if (direction != sPilot.ladderDirection) {
-                sPilot.ladderDirection = direction;
-                LinkAnimationHeader* anim = player->ageProperties->unk_AC[sPilot.ladderStep & 1];
-                const f32 last = Animation_GetLastFrame(anim);
-                LinkAnimation_Change(play, &player->skelAnime, anim, direction * climbSpeed,
-                                     direction > 0 ? 0.0f : last, direction > 0 ? last : 0.0f, ANIMMODE_ONCE, 0.0f);
-            } else {
-                player->skelAnime.playSpeed = direction * climbSpeed;
+            player->stateFlags2 &= ~PLAYER_STATE2_STATIONARY_LADDER;
+            // As on P1, once a foot begins a rung it finishes that rung
+            // before a stop or direction reversal. This avoids half-rung
+            // foot slides and repeated animation restarts.
+            player->skelAnime.playSpeed = direction * sPilot.ladderCycleSpeed;
+            const bool rungFinished = LinkAnimation_Update(play, &player->skelAnime) != 0;
+            const f32 rootY = static_cast<f32>(player->skelAnime.jointTable[0].y);
+            const f32 delta = (rootY - sPilot.ladderLastRootY) * actor->scale.y;
+            if (std::isfinite(delta) && direction * delta >= 0.0f && std::fabs(delta) <= 25.0f) {
+                actor->world.pos.y += delta;
+                sPilot.ladderLastRootY = rootY;
             }
-            if (LinkAnimation_Update(play, &player->skelAnime)) {
+            // World movement owns the actual rung translation; avoid
+            // simultaneously rendering that same root-bone displacement.
+            player->skelAnime.jointTable[0] = player->skelAnime.baseTransl;
+            if (rungFinished) {
                 sPilot.ladderStep ^= 1;
                 sPilot.ladderDirection = 0;
             }
-            // The vanilla ladder uses root translation from age-specific
-            // climbing assets. The separate pilot currently owns position,
-            // so reproduce that translation without Player_StartAnimMovement
-            // (which would mutate P1-only action globals).
-            actor->world.pos.y += direction * climbSpeed * player->ageProperties->unk_08 * 1.45f;
 
             // A bottom-entry query can see only one segmented ladder polygon.
             // Refresh the upper bound when the next tagged section is visible.
@@ -441,12 +539,13 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, const OSContPad& pad, b
                 s16 nextYaw = 0;
                 f32 nextBottom = 0.0f;
                 f32 nextTop = 0.0f;
-                if (ShipCrewPlayer_QueryLadder(play, player, false, &nextAnchor, &nextYaw, &nextBottom, &nextTop) &&
+                if (ShipCrewPlayer_QueryLadder(play, player, false, &nextAnchor, &nextYaw, &nextBottom, &nextTop,
+                                               sPilot.ladderYaw) &&
                     nextTop > sPilot.ladderTopY)
                     sPilot.ladderTopY = nextTop;
             }
 
-            if (direction < 0) {
+            if (rungFinished && direction < 0) {
                 Vec3f floorProbe = actor->world.pos;
                 floorProbe.y += 12.0f;
                 CollisionPoly* ground = nullptr;
@@ -457,21 +556,33 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, const OSContPad& pad, b
                     landing.y = floorY;
                     Pilot_LadderDismount(player, play, false, landing);
                 }
-            } else {
+            } else if (rungFinished && direction > 0) {
                 const f32 dirX = Math_SinS(sPilot.ladderYaw);
                 const f32 dirZ = Math_CosS(sPilot.ladderYaw);
-                Vec3f upperProbe = actor->world.pos;
-                upperProbe.x += dirX * (player->ageProperties->wallCheckRadius + 13.0f);
-                upperProbe.z += dirZ * (player->ageProperties->wallCheckRadius + 13.0f);
-                upperProbe.y += player->ageProperties->unk_40;
-                CollisionPoly* upperFloor = nullptr;
-                const f32 upperY = BgCheck_EntityRaycastFloor1(&play->colCtx, &upperFloor, &upperProbe);
-                if (upperFloor != nullptr && actor->world.pos.y >= upperY - 7.0f &&
-                    upperY >= sPilot.ladderBottomY + 25.0f) {
-                    Vec3f landing = upperProbe;
-                    landing.y = upperY;
+                // P1 checks an age-dependent point beyond the ladder wall.
+                // The old single 13-unit offset could miss deeper top floors,
+                // leaving a bottom-entry climb permanently stuck at its top.
+                Vec3f landing = {};
+                bool foundTop = false;
+                for (const f32 extra : { 13.0f, 27.0f, 40.0f }) {
+                    Vec3f upperProbe = actor->world.pos;
+                    upperProbe.x += dirX * (player->ageProperties->wallCheckRadius + extra);
+                    upperProbe.z += dirZ * (player->ageProperties->wallCheckRadius + extra);
+                    upperProbe.y += player->ageProperties->unk_40;
+                    CollisionPoly* upperFloor = nullptr;
+                    const f32 upperY = BgCheck_EntityRaycastFloor1(&play->colCtx, &upperFloor, &upperProbe);
+                    if (upperFloor != nullptr &&
+                        actor->world.pos.y >= upperY - std::max(15.0f, 22.0f * player->ageProperties->unk_08) &&
+                        actor->world.pos.y <= upperY + 25.0f && upperY >= sPilot.ladderBottomY + 25.0f) {
+                        landing = upperProbe;
+                        landing.y = upperY;
+                        foundTop = true;
+                        break;
+                    }
+                }
+                if (foundTop) {
                     Pilot_LadderDismount(player, play, true, landing);
-                } else if (actor->world.pos.y >= sPilot.ladderTopY - 3.0f &&
+                } else if (actor->world.pos.y >= sPilot.ladderTopY - 18.0f &&
                            sPilot.ladderTopEntry.y >= sPilot.ladderTopY - 14.0f) {
                     // Return to the ORIGINAL platform when climbing back out
                     // of the ladder P2 entered from above.
@@ -486,10 +597,8 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, const OSContPad& pad, b
     return true;
 }
 
-bool Pilot_TryLadder(Player* player, PlayState* play, const OSContPad& pad, bool enabled, bool canAct, bool moving,
+bool Pilot_TryLadder(Player* player, PlayState* play, s16 approachYaw, bool enabled, bool canAct, bool moving,
                      bool carryingBomb) {
-    if (sPilot.ladderCooldown > 0)
-        --sPilot.ladderCooldown;
     if (!enabled || !canAct || carryingBomb || !moving || sPilot.ledgeCooldownFrames > 0 || sPilot.ladderCooldown > 0 ||
         sPilot.rollFrames > 0 || sPilot.itemFrames > 0 || sPilot.lockedTarget != nullptr ||
         sPilot.traversal != PilotTraversal::None || sPilot.dodge != PilotDodge::None ||
@@ -500,14 +609,16 @@ bool Pilot_TryLadder(Player* player, PlayState* play, const OSContPad& pad, bool
     s16 yaw = 0;
     f32 bottomY = 0.0f;
     f32 topY = 0.0f;
-    // Prefer the requested top descent: from ground directly above an
-    // actual flagged ladder, P2 can press DOWN without falling first.
-    if (pad.stick_y < -25 && ShipCrewPlayer_QueryLadder(play, player, true, &anchor, &yaw, &bottomY, &topY)) {
+    // Use ACTUAL world movement rather than raw stick_y. Otherwise a
+    // sideways camera angle prevents top descent or bottom entry even
+    // while P2 is clearly moving straight toward the tagged ladder.
+    if ((player->actor.bgCheckFlags & BGCHECKFLAG_GROUND) &&
+        ShipCrewPlayer_QueryLadder(play, player, true, &anchor, &yaw, &bottomY, &topY, approachYaw)) {
         Pilot_BeginLadder(player, play, true, anchor, yaw, bottomY, topY);
         return true;
     }
-    if ((player->actor.bgCheckFlags & BGCHECKFLAG_GROUND) && pad.stick_y > 25 &&
-        ShipCrewPlayer_QueryLadder(play, player, false, &anchor, &yaw, &bottomY, &topY)) {
+    if ((player->actor.bgCheckFlags & BGCHECKFLAG_GROUND) &&
+        ShipCrewPlayer_QueryLadder(play, player, false, &anchor, &yaw, &bottomY, &topY, approachYaw)) {
         Pilot_BeginLadder(player, play, false, anchor, yaw, bottomY, topY);
         return true;
     }
@@ -873,8 +984,10 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             // In hold mode, losing a target returns to parallel while held.
             sPilot.lockedTarget = nullptr;
             sPilot.parallelTargeting = holdTargeting;
+            sPilot.parallelFacing = actor->shape.rot.y;
         } else {
             sPilot.parallelTargeting = true;
+            sPilot.parallelFacing = actor->shape.rot.y;
             sPilot.parallelRecenterFrames = 15;
         }
     }
@@ -884,12 +997,15 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         if (dx * dx + dz * dz > 1050.0f * 1050.0f) {
             sPilot.lockedTarget = nullptr;
             sPilot.parallelTargeting = holdTargeting && zHeld;
+            sPilot.parallelFacing = actor->shape.rot.y;
         }
     }
     if (sPilot.parallelRecenterFrames > 0)
         --sPilot.parallelRecenterFrames;
     if (!zHeld && sPilot.parallelTargeting && (holdTargeting || sPilot.parallelRecenterFrames == 0))
         sPilot.parallelTargeting = false;
+    if (sPilot.parallelTargeting)
+        player->parallelYaw = sPilot.parallelFacing;
     if (sPilot.lockedTarget != nullptr) {
         player->focusActor = sPilot.lockedTarget;
         player->stateFlags1 |= PLAYER_STATE1_Z_TARGETING;
@@ -908,6 +1024,9 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     // rolls while running; there is no manual A-button jump.
     const bool nativeMovement = CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0;
     const bool nativeTraversal = nativeMovement && CVarGetInteger(SHIPCREW_NATIVE_TRAVERSAL_CVAR, 0) != 0;
+    // One cooldown clock even when probing before AND after ground movement.
+    if (sPilot.ladderCooldown > 0)
+        --sPilot.ladderCooldown;
     if (!nativeTraversal &&
         (sPilot.traversal == PilotTraversal::Hanging || sPilot.traversal == PilotTraversal::Climbing ||
          sPilot.traversal == PilotTraversal::HighStepWindup)) {
@@ -915,7 +1034,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     }
     if (!nativeTraversal && sPilot.ladder != PilotLadder::None)
         Pilot_ClearLadder(player);
-    if (nativeTraversal && Pilot_UpdateLadder(player, play, pad, canAct)) {
+    if (nativeTraversal && Pilot_UpdateLadder(player, play, worldX, worldZ, canAct)) {
         player->currentTunic = GET_PLAYER(play)->currentTunic;
         player->currentBoots = GET_PLAYER(play)->currentBoots;
         player->currentShield = GET_PLAYER(play)->currentShield;
@@ -939,10 +1058,13 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     } else if (canAct && (pressed & BTN_A) && heldBomb == nullptr && wasGrounded && moving && sPilot.rollFrames == 0 &&
                sPilot.itemFrames == 0 && sPilot.dodge == PilotDodge::None) {
         PilotDodge dodge = PilotDodge::None;
-        if (nativeMovement && sPilot.lockedTarget != nullptr) {
-            const Vec3f& focus = sPilot.lockedTarget->focus.pos;
-            const s16 facing = static_cast<s16>(std::atan2(focus.x - actor->world.pos.x, focus.z - actor->world.pos.z) *
-                                                kRadiansToN64Angle);
+        if (nativeMovement && (sPilot.lockedTarget != nullptr || sPilot.parallelTargeting)) {
+            const s16 facing =
+                sPilot.lockedTarget != nullptr
+                    ? static_cast<s16>(std::atan2(sPilot.lockedTarget->focus.pos.x - actor->world.pos.x,
+                                                  sPilot.lockedTarget->focus.pos.z - actor->world.pos.z) *
+                                       kRadiansToN64Angle)
+                    : sPilot.parallelFacing;
             const f32 forward = worldX * Math_SinS(facing) + worldZ * Math_CosS(facing);
             const f32 right = worldZ * Math_SinS(facing) - worldX * Math_CosS(facing);
             if (std::fabs(right) > std::fabs(forward) * 1.2f)
@@ -950,6 +1072,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             else if (forward < -0.35f)
                 dodge = PilotDodge::Backflip;
             if (dodge != PilotDodge::None) {
+                SPDLOG_INFO("[ShipCrew] P2 Z dodge: direction={} hostile={} parallel={}", static_cast<int>(dodge),
+                            sPilot.lockedTarget != nullptr, sPilot.parallelTargeting);
                 sPilot.dodge = dodge;
                 sPilot.dodgeLanding = false;
                 const bool side = dodge != PilotDodge::Backflip;
@@ -972,6 +1096,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         }
         if (dodge == PilotDodge::None) {
             sPilot.nativeRoll = nativeMovement;
+            sPilot.rollRecoveryFrames = 0;
             sPilot.rollInvulnStarted = false;
             sPilot.rollFrames = nativeMovement ? 30 : kRollFrames;
             const f32 magnitude = 80.0f * std::min(inputLength, 1.0f);
@@ -1000,7 +1125,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     // animation from a smoothed movement yaw (it can lag behind the stick).
     sPilot.lockMove = PilotLockMove::None;
     const bool hostileLock = sPilot.lockedTarget != nullptr;
-    s16 targetFacing = actor->shape.rot.y;
+    const bool zMovement = hostileLock || sPilot.parallelTargeting;
+    s16 targetFacing = sPilot.parallelTargeting ? sPilot.parallelFacing : actor->shape.rot.y;
     if (hostileLock) {
         const Vec3f& focus = sPilot.lockedTarget->focus.pos;
         const f32 targetX = focus.x - actor->world.pos.x;
@@ -1008,8 +1134,10 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         if (targetX * targetX + targetZ * targetZ > 1.0f) {
             targetFacing = static_cast<s16>(std::atan2(targetX, targetZ) * kRadiansToN64Angle);
         }
+    }
+    if (zMovement) {
         if (canAct && moving) {
-            // Relative to the enemy, not to P1's camera and not to the
+            // Relative to P2's enemy or independent Z-parallel facing, never P1's camera and not to the
             // delayed velocity heading. This stays stable as the battle
             // camera circles the target and handles diagonal movement.
             const f32 sine = Math_SinS(targetFacing);
@@ -1044,14 +1172,17 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                          nativeLimit;
         }
         player->unk_880 = speedLimit;
-        const f32 nativeTarget =
-            canAct && moving ? ShipCrewPlayer_CalcGroundSpeedTarget(stickMagnitude, speedLimit, player->floorPitch,
-                                                                    !hostileLock && !sPilot.parallelTargeting)
-                             : 0.0f;
+        const f32 nativeTarget = canAct && moving ? ShipCrewPlayer_CalcGroundSpeedTarget(stickMagnitude, speedLimit,
+                                                                                         player->floorPitch, !zMovement)
+                                                  : 0.0f;
         if (sPilot.dodge != PilotDodge::None) {
             player->yaw = actor->world.rot.y = sPilot.dodgeYaw;
-            if (sPilot.dodgeLanding)
-                Math_StepToF(&player->linearVelocity, 0.0f, REG(43) / 100.0f);
+            if (sPilot.dodgeLanding) {
+                // Landing in P1 returns to the grounded action handler.
+                // Holding P2 at airborne speed until a long landing clip
+                // finished produced the reported stop delay and sliding.
+                Math_StepToF(&player->linearVelocity, 0.0f, moving ? 2.5f : 3.5f);
+            }
             actor->speedXZ = std::max(player->linearVelocity, 0.0f);
         } else if (sPilot.rollFrames > 0) {
             if (sPilot.nativeRoll) {
@@ -1062,6 +1193,16 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                     const f32 rollTarget = std::max(3.0f, ShipCrewPlayer_CalcGroundSpeedTarget(
                                                               stickMagnitude, speedLimit, player->floorPitch, true) *
                                                               1.5f);
+                    // Preserve P1's committed opening roll direction, then
+                    // permit modest analog corrections, not an instant
+                    // reverse or a perpetual camera-facing lock.
+                    if (player->skelAnime.curFrame >= 8.0f && moving) {
+                        const s16 inputYaw = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
+                        const s16 delta = static_cast<s16>(inputYaw - sPilot.rollYaw);
+                        if (std::abs(static_cast<s32>(delta)) < 0x3000)
+                            sPilot.rollYaw =
+                                static_cast<s16>(sPilot.rollYaw + std::clamp(static_cast<s32>(delta), -0x380, 0x380));
+                    }
                     ShipCrewPlayer_ApplyNativeRunMotion(player, rollTarget, sPilot.rollYaw);
                 } else {
                     Math_StepToF(&player->linearVelocity, 0.0f, REG(43) / 100.0f);
@@ -1071,6 +1212,34 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             } else {
                 actor->speedXZ = kRollSpeed;
             }
+        } else if (!wasGrounded && sPilot.traversal == PilotTraversal::AutoJump) {
+            // Player 1's airborne func_8083DFE0 uses 0.05/0.1 velocity
+            // changes and a 200-unit yaw step, not full ground acceleration.
+            // Full ground acceleration every airborne frame made P2's
+            // autojump violently re-steer as its own camera followed it.
+            const s16 desiredYaw =
+                moving ? static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle) : player->yaw;
+            const s16 yawDiff = player->yaw - desiredYaw;
+            if (std::abs(static_cast<s32>(yawDiff)) > 0x6000) {
+                if (Math_StepToF(&player->linearVelocity, 0.0f, 1.0f))
+                    player->yaw = desiredYaw;
+            } else {
+                Math_AsymStepToF(&player->linearVelocity, moving ? nativeTarget : 0.0f, 0.05f, 0.1f);
+                Math_ScaledStepToS(&player->yaw, desiredYaw, 200);
+            }
+            actor->speedXZ = std::max(0.0f, player->linearVelocity);
+            actor->world.rot.y = player->yaw;
+        } else if (sPilot.rollRecoveryFrames > 0 &&
+                   (!canAct || !moving ||
+                    std::abs(static_cast<s32>(static_cast<s16>(
+                        static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle) - player->yaw))) > 0x1800)) {
+            // P2 previously carried almost the entire roll velocity into
+            // ordinary walking, where a large yaw change felt like ice.
+            // Apply stronger braking only during the short roll handoff.
+            if (Math_StepToF(&player->linearVelocity, 0.0f, 2.5f) && canAct && moving)
+                player->yaw = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
+            actor->speedXZ = std::max(player->linearVelocity, 0.0f);
+            actor->world.rot.y = player->yaw;
         } else if (!canAct || !moving) {
             // Vanilla standing uses the boot-dependent idle deceleration.
             Math_StepToF(&player->linearVelocity, 0.0f, REG(43) / 100.0f);
@@ -1079,7 +1248,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         } else {
             const s16 desiredYaw = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
             const s16 yawDiff = desiredYaw - player->yaw;
-            if (hostileLock) {
+            if (zMovement) {
                 // Native Link selects separate side/back locomotion states.
                 // Do not run the ordinary >90-degree turn brake here: that
                 // prevented lateral motion as the camera turned in battle.
@@ -1100,7 +1269,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             actor->speedXZ = std::max(player->linearVelocity, 0.0f);
             actor->world.rot.y = player->yaw;
         }
-        if (!hostileLock)
+        if (!zMovement)
             actor->shape.rot.y = actor->world.rot.y;
     } else if (sPilot.rollFrames > 0) {
         actor->speedXZ = kRollSpeed;
@@ -1112,13 +1281,21 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         }
         if (canAct && moving) {
             actor->world.rot.y = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
-            if (!hostileLock)
+            if (!zMovement)
                 actor->shape.rot.y = actor->world.rot.y;
         }
     }
 
-    if (hostileLock && sPilot.rollFrames == 0) {
+    if (zMovement && sPilot.rollFrames == 0 && sPilot.dodge == PilotDodge::None) {
         actor->shape.rot.y = targetFacing;
+    }
+    // Player 1 can attach to the ladder at a platform lip before its
+    // ground-leave physics step. P2 previously tested only after falling.
+    const s16 approachYaw = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
+    if (nativeTraversal && wasGrounded &&
+        Pilot_TryLadder(player, play, approachYaw, nativeTraversal, canAct, moving, heldBomb != nullptr)) {
+        Actor_SetFocus(actor, 40.0f);
+        return;
     }
     const bool fallingBeforeMove = actor->velocity.y < -1.0f;
     Actor_MoveXZGravity(actor);
@@ -1143,7 +1320,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     }
     if (wasGrounded && !(actor->bgCheckFlags & BGCHECKFLAG_GROUND))
         sPilot.takeoffY = actor->world.pos.y;
-    if (Pilot_TryLadder(player, play, pad, nativeTraversal, canAct, moving,
+    if (Pilot_TryLadder(player, play, approachYaw, nativeTraversal, canAct, moving,
                         Pilot_FindHeldBomb(actor, play) != nullptr)) {
         Actor_SetFocus(actor, 40.0f);
         sPilot.lastObservedBombAmmo = AMMO(ITEM_BOMB);
@@ -1243,7 +1420,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                                                                                        : PLAYER_ANIMGROUP_short_landing)
                                    : Pilot_Animation(gPlayerAnim_link_normal_short_landing_free);
         mode = ANIMMODE_ONCE;
-    } else if (hostileLock) {
+    } else if (zMovement) {
         // The animation must follow the independent motion quadrant chosen
         // from the target-relative stick vector. Comparing smoothed yaw with
         // actor facing gave the wrong side (or a forward run) after camera
@@ -1269,22 +1446,9 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             locomotionLoop = true;
         }
     } else if (nativeMovement) {
-        if (!moving || actor->speedXZ < 0.15f) {
+        if (!moving || actor->speedXZ < 0.15f)
             animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_wait);
-        } else if (sPilot.parallelTargeting) {
-            const s16 facingDiff = player->yaw - actor->shape.rot.y;
-            if (std::abs(static_cast<s32>(facingDiff)) >= 0x6000) {
-                animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_back_walk);
-            } else if (facingDiff > 0x2000) {
-                animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_side_walkR);
-            } else if (facingDiff < -0x2000) {
-                animation = ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_side_walkL);
-            } else {
-                animation =
-                    ShipCrewPlayer_GetGroupAnimation(player, running ? PLAYER_ANIMGROUP_run : PLAYER_ANIMGROUP_walk);
-            }
-            locomotionLoop = true;
-        } else {
+        else {
             animation =
                 ShipCrewPlayer_GetGroupAnimation(player, running ? PLAYER_ANIMGROUP_run : PLAYER_ANIMGROUP_walk);
             locomotionLoop = true;
@@ -1307,7 +1471,12 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         player->skelAnime.playSpeed = std::clamp(actor->speedXZ / (running ? 5.0f : 2.0f), 0.6f, 2.0f);
     }
     const bool animationFinished = LinkAnimation_Update(play, &player->skelAnime) != 0;
-    if (sPilot.dodge != PilotDodge::None && sPilot.dodgeLanding && animationFinished) {
+    if (sPilot.dodge != PilotDodge::None && sPilot.dodgeLanding &&
+        (animationFinished || (moving && player->skelAnime.curFrame >= 3.0f) ||
+         (!moving && player->skelAnime.curFrame >= 5.0f && player->linearVelocity <= 0.5f))) {
+        // P1 hands control back at touchdown. Give P2 a few frames of
+        // landing animation without forcing the entire clip to play before
+        // the stick can resume grounded locomotion.
         sPilot.dodge = PilotDodge::None;
         sPilot.dodgeLanding = false;
     }
@@ -1318,9 +1487,17 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                 Player_SetInvulnerability(player, -10);
                 sPilot.rollInvulnStarted = true;
             }
+            const s16 inputYaw = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
+            const bool changedCourse =
+                moving && std::abs(static_cast<s32>(static_cast<s16>(inputYaw - sPilot.rollYaw))) > 0x2800;
+            // P1 can process a new action once its roll is mature. Release
+            // or a deliberate major change of direction recovers at frame
+            // 15 instead of holding P2 rigidly until frame 20.
             if (player->skelAnime.curFrame >= 20.0f ||
+                (player->skelAnime.curFrame >= 15.0f && (!moving || changedCourse)) ||
                 player->skelAnime.animation !=
                     ShipCrewPlayer_GetGroupAnimation(player, PLAYER_ANIMGROUP_landing_roll)) {
+                sPilot.rollRecoveryFrames = (!moving || changedCourse) ? 5 : 0;
                 sPilot.nativeRoll = false;
                 sPilot.rollFrames = 0;
             }
@@ -1328,6 +1505,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             --sPilot.rollFrames;
         }
     }
+    if (sPilot.rollRecoveryFrames > 0)
+        --sPilot.rollRecoveryFrames;
     if (sPilot.landingFrames > 0) {
         --sPilot.landingFrames;
         if (sPilot.landingFrames == 0)

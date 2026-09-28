@@ -5456,20 +5456,20 @@ s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* outRise, Vec
 // fromTop probes down and outward from the brink, where the ladder surface
 // is generally below P2's feet instead of at shoulder height.
 s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec3f* outAnchor, s16* outFacing,
-                               f32* outBottomY, f32* outTopY) {
+                               f32* outBottomY, f32* outTopY, s16 approachYaw) {
     if (play == NULL || player == NULL || player->ageProperties == NULL || outAnchor == NULL || outFacing == NULL ||
         outBottomY == NULL || outTopY == NULL) {
         return false;
     }
 
-    const f32 forwardX = Math_SinS(player->yaw);
-    const f32 forwardZ = Math_CosS(player->yaw);
+    const f32 forwardX = Math_SinS(approachYaw);
+    const f32 forwardZ = Math_CosS(approachYaw);
     const f32 radius = player->ageProperties->wallCheckRadius;
     const Vec3f pos = player->actor.world.pos;
-    // At the top allow either orientation: the player can walk to the lip
-    // facing the ladder or back up to it. The actual flagged wall and a real
-    // floor drop still must be present in either case.
-    for (s32 direction = 1; direction >= (fromTop ? -1 : 1); direction -= 2) {
+    // Use P2's actual world travel direction. A backwards camera-relative
+    // stick is already represented by the appropriate world yaw; probing
+    // behind it could grab a ladder the player is walking away from.
+    for (s32 direction = 1; direction > 0; direction -= 2) {
         const f32 dx = forwardX * direction;
         const f32 dz = forwardZ * direction;
         Vec3f start = pos;
@@ -5481,13 +5481,26 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
             // Only consider a ladder if the ground really falls away on
             // this side. Otherwise pressing DOWN near an ordinary wall must
             // not grab it or teleport the second player.
-            Vec3f ahead = pos;
-            ahead.x += dx * (radius + 24.0f);
-            ahead.z += dz * (radius + 24.0f);
-            ahead.y += 50.0f;
-            CollisionPoly* aheadPoly = NULL;
-            const f32 aheadY = BgCheck_EntityRaycastFloor1(&play->colCtx, &aheadPoly, &ahead);
-            if (aheadPoly != NULL && aheadY > pos.y - 35.0f)
+            // P1 tests the brink's tagged wall contact. P2's old single
+            // radius+24 floor probe often still landed on the upper platform
+            // and rejected legitimate ladder-top entry. Check multiple
+            // positions beyond the brink, but ONLY attach if the ray below
+            // subsequently hits an actual ladder or ladder-top polygon.
+            const f32 lipOffsets[] = { radius + 18.0f, radius + 36.0f, radius + 54.0f };
+            s32 lipDrops = false;
+            for (s32 i = 0; i < 3; ++i) {
+                Vec3f ahead = pos;
+                ahead.x += dx * lipOffsets[i];
+                ahead.z += dz * lipOffsets[i];
+                ahead.y += 50.0f;
+                CollisionPoly* aheadPoly = NULL;
+                const f32 aheadY = BgCheck_EntityRaycastFloor1(&play->colCtx, &aheadPoly, &ahead);
+                if (aheadPoly == NULL || aheadY <= pos.y - 35.0f) {
+                    lipDrops = true;
+                    break;
+                }
+            }
+            if (!lipDrops)
                 continue;
             start.x -= dx * 4.0f;
             start.z -= dz * 4.0f;
@@ -5501,10 +5514,42 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
             end.x += dx * (radius + 16.0f);
             end.z += dz * (radius + 16.0f);
         }
-        if (!BgCheck_EntityLineTest1(&play->colCtx, &start, &end, &hit, &wall, true, false, false, true, &bgId) ||
-            wall == NULL) {
-            continue;
+        s32 found = BgCheck_EntityLineTest1(&play->colCtx, &start, &end, &hit, &wall, true, false, false, true, &bgId);
+        if (fromTop &&
+            (!found || wall == NULL ||
+             !(SurfaceType_GetWallFlags(&play->colCtx, wall, bgId) & (WALL_FLAG_LADDER | WALL_FLAG_LADDER_TOP)))) {
+            // P1 attaches to the tagged wall/top collision at the lip.
+            // A single diagonal ray easily misses narrow ladder-top
+            // polygons, particularly before the player's feet leave ground.
+            // Probe across the lip again from a lower starting height.
+            start = pos;
+            start.x += dx * (radius * 0.5f);
+            start.z += dz * (radius * 0.5f);
+            start.y -= 12.0f;
+            end = start;
+            end.x += dx * (radius + 18.0f);
+            end.z += dz * (radius + 18.0f);
+            end.y -= 100.0f;
+            found = BgCheck_EntityLineTest1(&play->colCtx, &start, &end, &hit, &wall, true, false, false, true, &bgId);
         }
+        if ((!found || wall == NULL ||
+             !(SurfaceType_GetWallFlags(&play->colCtx, wall, bgId) &
+               (WALL_FLAG_LADDER | (fromTop ? WALL_FLAG_LADDER_TOP : 0)))) &&
+            player->actor.wallPoly != NULL && (player->actor.bgCheckFlags & BGCHECKFLAG_WALL)) {
+            // P1 obtains the actual touching wall from collision processing.
+            // Reuse that verified contact only when its surface flags
+            // identify a ladder, never attach P2 to arbitrary walls.
+            CollisionPoly* contact = player->actor.wallPoly;
+            const s32 flags = SurfaceType_GetWallFlags(&play->colCtx, contact, player->actor.wallBgId);
+            if ((flags & WALL_FLAG_LADDER) || (fromTop && (flags & WALL_FLAG_LADDER_TOP))) {
+                wall = contact;
+                bgId = player->actor.wallBgId;
+                hit = pos;
+                found = true;
+            }
+        }
+        if (!found || wall == NULL)
+            continue;
         const s32 wallFlags = SurfaceType_GetWallFlags(&play->colCtx, wall, bgId);
         // OoT intentionally distinguishes a ladder's vertical surface
         // from its upper entrance. Without LADDER_TOP P2 could never
@@ -5528,7 +5573,12 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
         outAnchor->x = hit.x + side * nx * (radius - 1.0f);
         outAnchor->z = hit.z + side * nz * (radius - 1.0f);
         outAnchor->y = pos.y;
-        *outFacing = side > 0.0f ? (s16)(Math_Atan2S(nz, nx) + 0x8000) : Math_Atan2S(nz, nx);
+        // P1's native top entry (climb_startB) faces AWAY from the
+        // tagged wall, while bottom entry (climb_startA) faces INTO it.
+        // Giving both the same yaw made top descent immediately act like
+        // bottom ascent and sent upper-platform dismount probes backward.
+        const s16 towardWall = side > 0.0f ? (s16)(Math_Atan2S(nz, nx) + 0x8000) : Math_Atan2S(nz, nx);
+        *outFacing = fromTop ? (s16)(towardWall + 0x8000) : towardWall;
         *outTopY = fromTop ? pos.y : maxY;
         *outBottomY = fromTop ? minY : pos.y;
         // For segmented ladder polygons there may be a lower ground floor
