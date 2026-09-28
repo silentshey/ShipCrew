@@ -974,12 +974,12 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                sPilot.itemFrames == 0 && sPilot.dodge == PilotDodge::None) {
         PilotDodge dodge = PilotDodge::None;
         if (nativeMovement && (sPilot.lockedTarget != nullptr || sPilot.parallelTargeting)) {
-            const s16 facing = sPilot.lockedTarget != nullptr
-                                   ? static_cast<s16>(
-                                         std::atan2(sPilot.lockedTarget->focus.pos.x - actor->world.pos.x,
-                                                    sPilot.lockedTarget->focus.pos.z - actor->world.pos.z) *
-                                         kRadiansToN64Angle)
-                                   : sPilot.parallelFacing;
+            const s16 facing =
+                sPilot.lockedTarget != nullptr
+                    ? static_cast<s16>(std::atan2(sPilot.lockedTarget->focus.pos.x - actor->world.pos.x,
+                                                  sPilot.lockedTarget->focus.pos.z - actor->world.pos.z) *
+                                       kRadiansToN64Angle)
+                    : sPilot.parallelFacing;
             const f32 forward = worldX * Math_SinS(facing) + worldZ * Math_CosS(facing);
             const f32 right = worldZ * Math_SinS(facing) - worldX * Math_CosS(facing);
             if (std::fabs(right) > std::fabs(forward) * 1.2f)
@@ -987,8 +987,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             else if (forward < -0.35f)
                 dodge = PilotDodge::Backflip;
             if (dodge != PilotDodge::None) {
-                SPDLOG_INFO("[ShipCrew] P2 Z dodge: direction={} hostile={} parallel={}",
-                            static_cast<int>(dodge), sPilot.lockedTarget != nullptr, sPilot.parallelTargeting);
+                SPDLOG_INFO("[ShipCrew] P2 Z dodge: direction={} hostile={} parallel={}", static_cast<int>(dodge),
+                            sPilot.lockedTarget != nullptr, sPilot.parallelTargeting);
                 sPilot.dodge = dodge;
                 sPilot.dodgeLanding = false;
                 const bool side = dodge != PilotDodge::Backflip;
@@ -1086,10 +1086,9 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                          nativeLimit;
         }
         player->unk_880 = speedLimit;
-        const f32 nativeTarget =
-            canAct && moving ? ShipCrewPlayer_CalcGroundSpeedTarget(stickMagnitude, speedLimit, player->floorPitch,
-                                                                    !zMovement)
-                             : 0.0f;
+        const f32 nativeTarget = canAct && moving ? ShipCrewPlayer_CalcGroundSpeedTarget(stickMagnitude, speedLimit,
+                                                                                         player->floorPitch, !zMovement)
+                                                  : 0.0f;
         if (sPilot.dodge != PilotDodge::None) {
             player->yaw = actor->world.rot.y = sPilot.dodgeYaw;
             if (sPilot.dodgeLanding)
