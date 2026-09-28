@@ -85,6 +85,7 @@ struct PilotRuntime {
     f32 rollSpeed = 0.0f;
     s16 rollYaw = 0;
     bool nativeMovementPreviouslyEnabled = false;
+    bool longLanding = false;
     int landingFrames = 0;
     int ledgeProbeFrames = 0;
     int ledgeProbeType = 0;
@@ -149,7 +150,6 @@ Actor* Pilot_FindTarget(PlayState* play, Actor* pilot, Actor* exclude) {
 LinkAnimationHeader* Pilot_Animation(const char* asset) {
     return reinterpret_cast<LinkAnimationHeader*>(const_cast<char*>(asset));
 }
-
 
 void Pilot_ClearTraversal(Actor* actor, Player* player) {
     sPilot.traversal = PilotTraversal::None;
@@ -329,7 +329,8 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
     // yaw; probe while advancing against a wall, or when descending toward
     // a reachable edge. Do not snap P2 to arbitrary scenery when idle.
     const bool descendingTowardWall =
-        !grounded && falling && sPilot.traversal == PilotTraversal::AutoJump && actor->speedXZ > 0.3f;
+        !grounded && falling && (sPilot.traversal == PilotTraversal::AutoJump || !wasGrounded) &&
+        actor->speedXZ > 0.3f;
     if ((!grounded && !descendingTowardWall) || (grounded && (!moving || actor->speedXZ < 0.3f)) ||
         sPilot.lockedTarget != nullptr) {
         sPilot.ledgeProbeFrames = 0;
@@ -381,8 +382,8 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
         actor->gravity = 0.0f;
         actor->world.rot.y = actor->shape.rot.y = player->yaw = facing;
         LinkAnimationHeader* anim = Pilot_Animation(gPlayerAnim_link_normal_250jump_start);
-        LinkAnimation_Change(play, &player->skelAnime, anim, 1.0f, 0.0f, Animation_GetLastFrame(anim),
-                             ANIMMODE_ONCE, -3.0f);
+        LinkAnimation_Change(play, &player->skelAnime, anim, 1.0f, 0.0f, Animation_GetLastFrame(anim), ANIMMODE_ONCE,
+                             -3.0f);
     } else {
         Pilot_BeginClimb(player, play, type, false);
     }
@@ -681,9 +682,9 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     // rolls while running; there is no manual A-button jump.
     const bool nativeMovement = CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0;
     const bool nativeTraversal = nativeMovement && CVarGetInteger(SHIPCREW_NATIVE_TRAVERSAL_CVAR, 0) != 0;
-    if (!nativeTraversal && (sPilot.traversal == PilotTraversal::Hanging ||
-                             sPilot.traversal == PilotTraversal::Climbing ||
-                             sPilot.traversal == PilotTraversal::HighStepWindup)) {
+    if (!nativeTraversal &&
+        (sPilot.traversal == PilotTraversal::Hanging || sPilot.traversal == PilotTraversal::Climbing ||
+         sPilot.traversal == PilotTraversal::HighStepWindup)) {
         Pilot_ClearTraversal(actor, player);
     }
     if (nativeTraversal && Pilot_UpdateTraversal(player, play, pad, pressed, canAct)) {
@@ -808,6 +809,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     } else {
         Actor_UpdateBgCheckInfo(play, actor, kWallCheckHeight, kWallCheckRadius, kCeilingCheckHeight, 0x1D);
     }
+    if (wasGrounded && !(actor->bgCheckFlags & BGCHECKFLAG_GROUND))
+        sPilot.takeoffY = actor->world.pos.y;
     if (Pilot_TryTraversal(player, play, wasGrounded, canAct, moving, nativeTraversal,
                            Pilot_FindHeldBomb(actor, play) != nullptr)) {
         Actor_SetFocus(actor, 40.0f);
@@ -822,7 +825,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     const bool grounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
     if (!wasGrounded && grounded && fallingBeforeMove) {
         const f32 fallDistance = sPilot.takeoffY - actor->world.pos.y;
-        sPilot.landingFrames = nativeTraversal && fallDistance > 80.0f ? kLandingFrames * 2 : kLandingFrames;
+        sPilot.longLanding = nativeTraversal && fallDistance > 80.0f;
+        sPilot.landingFrames = sPilot.longLanding ? kLandingFrames * 2 : kLandingFrames;
         if (sPilot.traversal == PilotTraversal::AutoJump)
             Pilot_ClearTraversal(actor, player);
     }
@@ -889,11 +893,10 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         animation = Pilot_Animation(moving ? gPlayerAnim_link_normal_carryB : gPlayerAnim_link_normal_carryB_wait);
         locomotionLoop = moving;
     } else if (sPilot.landingFrames > 0) {
-        const bool longFall = nativeTraversal && sPilot.landingFrames > kLandingFrames;
-        animation = nativeMovement
-                        ? ShipCrewPlayer_GetGroupAnimation(
-                              player, longFall ? PLAYER_ANIMGROUP_landing : PLAYER_ANIMGROUP_short_landing)
-                        : Pilot_Animation(gPlayerAnim_link_normal_short_landing_free);
+        const bool longFall = nativeTraversal && sPilot.longLanding;
+        animation = nativeMovement ? ShipCrewPlayer_GetGroupAnimation(player, longFall ? PLAYER_ANIMGROUP_landing
+                                                                                       : PLAYER_ANIMGROUP_short_landing)
+                                   : Pilot_Animation(gPlayerAnim_link_normal_short_landing_free);
         mode = ANIMMODE_ONCE;
     } else if (nativeMovement) {
         if (!moving || actor->speedXZ < 0.15f) {
@@ -940,6 +943,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     }
     if (sPilot.landingFrames > 0) {
         --sPilot.landingFrames;
+        if (sPilot.landingFrames == 0)
+            sPilot.longLanding = false;
     }
     if (sPilot.itemFrames > 0) {
         --sPilot.itemFrames;
