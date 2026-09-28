@@ -93,6 +93,7 @@ enum class PilotTraversal { None, AutoJump, HighStepWindup, Hanging, Climbing };
 enum class PilotLadder { None, EnterBottom, EnterTop, Active, DismountBottom, DismountTop };
 enum class PilotLockMove { None, Forward, Back, Left, Right };
 enum class PilotDodge { None, SideLeft, Backflip, SideRight };
+enum class PilotCrawl { None, Enter, Move, Exit };
 struct PilotRuntime {
     Actor* actor = nullptr;
     Actor* heldBomb = nullptr;
@@ -101,6 +102,9 @@ struct PilotRuntime {
     Actor* carriedProp = nullptr;
     bool pickupAttached = false;
     int contextCooldown = 0;
+    PilotCrawl crawl = PilotCrawl::None;
+    s16 crawlYaw = 0;
+    f32 crawlDistance = 0.0f;
     PilotLockMove lockMove = PilotLockMove::None;
     bool parallelTargeting = false;
     int parallelRecenterFrames = 0;
@@ -942,6 +946,102 @@ bool Pilot_UpdatePropPickup(Player* player, PlayState* play) {
     return true;
 }
 
+// P1 and P2 use the SAME native crawlspace polygon alignment query.
+// P2 owns the animation/action state instead of invoking P1's globals or
+// the original OnePointCutscene_Init (which would steal P1's camera).
+bool Pilot_TryCrawl(Player* player, PlayState* play, bool enabled, bool canAct, u32 pressed) {
+    Actor* actor = &player->actor;
+    if (!enabled || !canAct || !(pressed & BTN_A) || LINK_IS_ADULT ||
+        sPilot.crawl != PilotCrawl::None || sPilot.contextCooldown != 0 ||
+        sPilot.carriedProp != nullptr || sPilot.pickupCandidate != nullptr ||
+        sPilot.heldBomb != nullptr || sPilot.ladder != PilotLadder::None ||
+        sPilot.traversal != PilotTraversal::None || sPilot.rollFrames > 0 ||
+        sPilot.dodge != PilotDodge::None || player->ageProperties == nullptr ||
+        !(actor->bgCheckFlags & BGCHECKFLAG_GROUND) ||
+        !(actor->bgCheckFlags & BGCHECKFLAG_PLAYER_WALL_INTERACT)) return false;
+    Vec3f center = {};
+    if (!ShipCrewPlayer_QueryCrawlspace(play, player, &center)) return false;
+    const s16 forward = actor->wallYaw + 0x8000;
+    if (ABS((s16)(actor->shape.rot.y - forward)) >= 0x3000) return false;
+    const CollisionPoly* wall = actor->wallPoly;
+    const f32 standOff = player->distToInteractWall > 0.0f
+                            ? player->distToInteractWall : player->ageProperties->wallCheckRadius - 1.0f;
+    actor->prevPos = actor->world.pos;
+    actor->world.pos.x = center.x + standOff * COLPOLY_GET_NORMAL(wall->normal.x);
+    actor->world.pos.z = center.z + standOff * COLPOLY_GET_NORMAL(wall->normal.z);
+    sPilot.crawl = PilotCrawl::Enter;
+    sPilot.crawlDistance = 0.0f;
+    sPilot.crawlYaw = forward;
+    actor->shape.rot.y = actor->world.rot.y = player->yaw = forward;
+    actor->speedXZ = actor->velocity.y = player->linearVelocity = 0.0f;
+    actor->gravity = 0.0f;
+    player->stateFlags2 |= PLAYER_STATE2_CRAWLING;
+    LinkAnimationHeader* animation = Pilot_Animation(gPlayerAnim_link_child_tunnel_start);
+    player->skelAnime.movementFlags = 0x9D;
+    LinkAnimation_Change(play, &player->skelAnime, animation, 1.0f, 0.0f,
+                         Animation_GetLastFrame(animation), ANIMMODE_ONCE, 0.0f);
+    SPDLOG_INFO("[ShipCrew] P2 crawlspace entry (shared native P1 polygon alignment)");
+    return true;
+}
+bool Pilot_UpdateCrawl(Player* player, PlayState* play, const OSContPad& pad) {
+    if (sPilot.crawl == PilotCrawl::None) return false;
+    Actor* actor = &player->actor;
+    actor->prevPos = actor->world.pos;
+    actor->speedXZ = actor->velocity.y = player->linearVelocity = actor->gravity = 0.0f;
+    actor->shape.rot.y = actor->world.rot.y = player->yaw = sPilot.crawlYaw;
+    player->stateFlags2 |= PLAYER_STATE2_CRAWLING;
+    if (sPilot.crawl != PilotCrawl::Move) {
+        const bool complete = LinkAnimation_Update(play, &player->skelAnime) != 0;
+        ShipCrewPlayer_QueueNativeAnimMovement(play, player);
+        if (complete) {
+            player->skelAnime.movementFlags = 0;
+            if (sPilot.crawl == PilotCrawl::Enter) {
+                sPilot.crawl = PilotCrawl::Move;
+            } else {
+                sPilot.crawl = PilotCrawl::None;
+                sPilot.contextCooldown = 20;
+                player->stateFlags2 &= ~PLAYER_STATE2_CRAWLING;
+                ShipCrewPlayer_ResetNativeGravity(player);
+            }
+        }
+    } else {
+        // P1's tunnel motion: signed stick Y * 0.03, no normal running.
+        const f32 step = pad.stick_y * 0.03f;
+        if (std::fabs(step) > 0.15f) {
+            const s16 facing = step > 0.0f ? sPilot.crawlYaw : (s16)(sPilot.crawlYaw + 0x8000);
+            Vec3f from = actor->world.pos;
+            from.y += 26.0f;
+            Vec3f to = from;
+            to.x += Math_SinS(facing) * 30.0f;
+            to.z += Math_CosS(facing) * 30.0f;
+            Vec3f hit = {};
+            CollisionPoly* wall = nullptr;
+            s32 bgId = BGCHECK_SCENE;
+            const bool exitWall = sPilot.crawlDistance > 22.0f &&
+                BgCheck_EntityLineTest1(&play->colCtx, &from, &to, &hit, &wall,
+                                         true, false, false, true, &bgId) && wall != nullptr &&
+                (SurfaceType_GetWallFlags(&play->colCtx, wall, bgId) & WALL_FLAG_CRAWLSPACE);
+            if (exitWall) {
+                sPilot.crawl = PilotCrawl::Exit;
+                LinkAnimationHeader* anim = Pilot_Animation(step > 0.0f
+                    ? gPlayerAnim_link_child_tunnel_end : gPlayerAnim_link_child_tunnel_start);
+                const f32 last = Animation_GetLastFrame(anim);
+                player->skelAnime.movementFlags = 0x9D;
+                LinkAnimation_Change(play, &player->skelAnime, anim, step > 0.0f ? 1.0f : -1.0f,
+                                     step > 0.0f ? 0.0f : last, step > 0.0f ? last : 0.0f,
+                                     ANIMMODE_ONCE, 0.0f);
+                SPDLOG_INFO("[ShipCrew] P2 crawlspace exit");
+            } else {
+                actor->world.pos.x += Math_SinS(sPilot.crawlYaw) * step;
+                actor->world.pos.z += Math_CosS(sPilot.crawlYaw) * step;
+                sPilot.crawlDistance += std::fabs(step);
+            }
+        }
+    }
+    Actor_SetFocus(actor, 25.0f);
+    return true;
+}
+
 void Pilot_ConsumeOneSharedAmmo(s16 item, s16 countBeforeSpawn) {
     const s16 expected = countBeforeSpawn - 1;
     const s16 afterSpawn = AMMO(item);
@@ -1239,12 +1339,13 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         Pilot_DetachProp(player, nullptr, false);
         carriedProp = nullptr;
     }
-    if (Pilot_UpdatePropPickup(player, play)) return;
+    if (Pilot_UpdateCrawl(player, play, pad) || Pilot_UpdatePropPickup(player, play)) return;
     Actor* heldBomb = Pilot_FindHeldBomb(actor, play);
     // The original action button releases a carried bomb first. Otherwise A
     // rolls while running; there is no manual A-button jump.
     const bool nativeMovement = CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0;
     const bool nativeTraversal = nativeMovement && CVarGetInteger(SHIPCREW_NATIVE_TRAVERSAL_CVAR, 0) != 0;
+    if (Pilot_TryCrawl(player, play, nativeTraversal, canAct, pressed)) return;
     // Native P1 gives environmental pickup priority over the A-button roll.
     if (canAct && (pressed & BTN_A) && nativeMovement && wasGrounded && heldBomb == nullptr &&
         sPilot.rollFrames == 0 && sPilot.itemFrames == 0 && sPilot.dodge == PilotDodge::None &&
