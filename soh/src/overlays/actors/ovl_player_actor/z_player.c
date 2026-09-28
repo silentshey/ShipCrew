@@ -7967,6 +7967,10 @@ void ShipCrewPlayer_BeginNativeClimb(PlayState* play, Player* player, const Vec3
 
     // Pilot items are validated independently before starting this action.
     // Avoid P1's global item/camera/cutscene put-away mechanism here.
+    // P2 has its own animation queue. Player_StartAnimMovement disables
+    // interpolation for the CURRENT queue; without this boundary a P2
+    // attachment can accidentally disable P1's animation in the same frame.
+    AnimationContext_SetNextQueue(play);
     Input* previousInput = sControlInput;
     sControlInput = &play->state.input[1];
     Player_SetupAction(play, player, Player_Action_8084BF1C, 0);
@@ -7988,6 +7992,7 @@ void ShipCrewPlayer_BeginNativeClimb(PlayState* play, Player* player, const Vec3
                   : (fromTop ? player->ageProperties->unk_A8 : player->ageProperties->unk_A4);
     Player_AnimPlayOnce(play, player, anim);
     Player_StartAnimMovement(play, player, 0x9F);
+    AnimationContext_SetNextQueue(play);
     sControlInput = previousInput;
 }
 
@@ -13803,6 +13808,10 @@ s32 ShipCrewPlayer_UpdateNativeClimbForPilot(PlayState* play, Player* player, In
     if (play == NULL || player == NULL || input == NULL || !ShipCrewPlayer_IsNativeClimbAction(player))
         return false;
 
+    // Mirror the P1 action/queue boundary, including transitions that call
+    // Player_StartAnimMovement or the native dismount helper. This prevents
+    // another Link's queued interpolation from inheriting P2's disable flag.
+    AnimationContext_SetNextQueue(play);
     Input* previousInput = sControlInput;
     const u32 previousTouchedWallFlags = sTouchedWallFlags;
     const f32 previousYDistToFloor = sYDistToFloor;
@@ -13826,6 +13835,7 @@ s32 ShipCrewPlayer_UpdateNativeClimbForPilot(PlayState* play, Player* player, In
 
     // P1 queues root movement after its actionFunc, not before.
     ShipCrewPlayer_QueueNativeAnimMovement(play, player);
+    AnimationContext_SetNextQueue(play);
     return true;
 }
 
