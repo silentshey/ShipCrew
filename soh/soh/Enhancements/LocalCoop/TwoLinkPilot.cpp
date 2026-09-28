@@ -403,8 +403,8 @@ void Pilot_LadderDismount(Player* player, PlayState* play, bool atTop, const Vec
     actor->prevPos = actor->world.pos;
     actor->velocity.y = actor->speedXZ = player->linearVelocity = 0.0f;
     actor->gravity = 0.0f;
-    SPDLOG_INFO("[ShipCrew] P2 ladder dismount: atTop={} fromY={} toY={}", atTop,
-                sPilot.ladderDismountStart.y, landing.y);
+    SPDLOG_INFO("[ShipCrew] P2 ladder dismount: atTop={} fromY={} toY={}", atTop, sPilot.ladderDismountStart.y,
+                landing.y);
     LinkAnimationHeader* anim = atTop ? player->ageProperties->unk_CC[sPilot.ladderStep & 1]
                                       : player->ageProperties->unk_C4[sPilot.ladderStep & 1];
     sPilot.ladder = atTop ? PilotLadder::DismountTop : PilotLadder::DismountBottom;
@@ -432,13 +432,12 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, const OSContPad& pad, b
     if (sPilot.ladder == PilotLadder::EnterTop || sPilot.ladder == PilotLadder::EnterBottom) {
         const bool enteringFromTop = sPilot.ladder == PilotLadder::EnterTop;
         const bool finished = LinkAnimation_Update(play, &player->skelAnime) != 0;
-        const f32 t = finished ? 1.0f : std::clamp(
-            player->skelAnime.curFrame / std::max(1.0f, player->skelAnime.endFrame), 0.0f, 1.0f);
+        const f32 t =
+            finished ? 1.0f
+                     : std::clamp(player->skelAnime.curFrame / std::max(1.0f, player->skelAnime.endFrame), 0.0f, 1.0f);
         const f32 progress = t * t * (3.0f - 2.0f * t);
-        actor->world.pos.x = sPilot.ladderEntryStart.x +
-                             (sPilot.ladderAnchor.x - sPilot.ladderEntryStart.x) * progress;
-        actor->world.pos.z = sPilot.ladderEntryStart.z +
-                             (sPilot.ladderAnchor.z - sPilot.ladderEntryStart.z) * progress;
+        actor->world.pos.x = sPilot.ladderEntryStart.x + (sPilot.ladderAnchor.x - sPilot.ladderEntryStart.x) * progress;
+        actor->world.pos.z = sPilot.ladderEntryStart.z + (sPilot.ladderAnchor.z - sPilot.ladderEntryStart.z) * progress;
         if (finished) {
             sPilot.ladder = PilotLadder::Active;
             sPilot.ladderDirection = 0;
@@ -447,15 +446,16 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, const OSContPad& pad, b
         }
     } else if (sPilot.ladder == PilotLadder::DismountTop || sPilot.ladder == PilotLadder::DismountBottom) {
         const bool finished = LinkAnimation_Update(play, &player->skelAnime) != 0;
-        const f32 t = finished ? 1.0f : std::clamp(
-            player->skelAnime.curFrame / std::max(1.0f, player->skelAnime.endFrame), 0.0f, 1.0f);
+        const f32 t =
+            finished ? 1.0f
+                     : std::clamp(player->skelAnime.curFrame / std::max(1.0f, player->skelAnime.endFrame), 0.0f, 1.0f);
         const f32 progress = t * t * (3.0f - 2.0f * t);
-        actor->world.pos.x = sPilot.ladderDismountStart.x +
-                             (sPilot.ladderDismountGoal.x - sPilot.ladderDismountStart.x) * progress;
-        actor->world.pos.y = sPilot.ladderDismountStart.y +
-                             (sPilot.ladderDismountGoal.y - sPilot.ladderDismountStart.y) * progress;
-        actor->world.pos.z = sPilot.ladderDismountStart.z +
-                             (sPilot.ladderDismountGoal.z - sPilot.ladderDismountStart.z) * progress;
+        actor->world.pos.x =
+            sPilot.ladderDismountStart.x + (sPilot.ladderDismountGoal.x - sPilot.ladderDismountStart.x) * progress;
+        actor->world.pos.y =
+            sPilot.ladderDismountStart.y + (sPilot.ladderDismountGoal.y - sPilot.ladderDismountStart.y) * progress;
+        actor->world.pos.z =
+            sPilot.ladderDismountStart.z + (sPilot.ladderDismountGoal.z - sPilot.ladderDismountStart.z) * progress;
         if (finished) {
             actor->world.pos = sPilot.ladderDismountGoal;
             actor->bgCheckFlags |= BGCHECKFLAG_GROUND;
@@ -504,7 +504,7 @@ bool Pilot_UpdateLadder(Player* player, PlayState* play, const OSContPad& pad, b
                 f32 nextBottom = 0.0f;
                 f32 nextTop = 0.0f;
                 if (ShipCrewPlayer_QueryLadder(play, player, false, &nextAnchor, &nextYaw, &nextBottom, &nextTop,
-                                              sPilot.ladderYaw) &&
+                                               sPilot.ladderYaw) &&
                     nextTop > sPilot.ladderTopY)
                     sPilot.ladderTopY = nextTop;
             }
@@ -1160,12 +1160,11 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                     // permit modest analog corrections, not an instant
                     // reverse or a perpetual camera-facing lock.
                     if (player->skelAnime.curFrame >= 8.0f && moving) {
-                        const s16 inputYaw =
-                            static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
+                        const s16 inputYaw = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
                         const s16 delta = static_cast<s16>(inputYaw - sPilot.rollYaw);
                         if (std::abs(static_cast<s32>(delta)) < 0x3000)
-                            sPilot.rollYaw = static_cast<s16>(
-                                sPilot.rollYaw + std::clamp(static_cast<s32>(delta), -0x380, 0x380));
+                            sPilot.rollYaw =
+                                static_cast<s16>(sPilot.rollYaw + std::clamp(static_cast<s32>(delta), -0x380, 0x380));
                     }
                     ShipCrewPlayer_ApplyNativeRunMotion(player, rollTarget, sPilot.rollYaw);
                 } else {
@@ -1451,8 +1450,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
                 Player_SetInvulnerability(player, -10);
                 sPilot.rollInvulnStarted = true;
             }
-            const s16 inputYaw =
-                static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
+            const s16 inputYaw = static_cast<s16>(std::atan2(worldX, worldZ) * kRadiansToN64Angle);
             const bool changedCourse =
                 moving && std::abs(static_cast<s32>(static_cast<s16>(inputYaw - sPilot.rollYaw))) > 0x2800;
             // P1 can process a new action once its roll is mature. Release
