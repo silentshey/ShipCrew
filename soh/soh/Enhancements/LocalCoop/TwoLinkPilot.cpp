@@ -555,6 +555,12 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
         sPilot.dodge != PilotDodge::None)
         return false;
 
+    // Grounded ledges/fences are now owned by Player_ActionHandler_12 above.
+    // Keep this older pilot path only for airborne hang capture/autojump; two
+    // simultaneous grounded ledge systems were the source of fence oddities.
+    if (grounded)
+        return false;
+
     // The original player probes at head height using the current forward
     // yaw; probe while advancing against a wall, or when descending toward
     // a reachable edge. Do not snap P2 to arbitrary scenery when idle.
@@ -650,7 +656,9 @@ Actor* Pilot_LiveProp(PlayState* play, Actor* ptr) {
 }
 Actor* Pilot_FindContextProp(PlayState* play, Player* player) {
     Actor* best = nullptr;
-    f32 bestDistance = 50.0f * 50.0f;
+    // P1 offers grass at 100 units and small rocks at 50. Use the larger
+    // native interaction envelope, then keep the facing/nearest filter.
+    f32 bestDistance = 100.0f * 100.0f;
     Actor* actor = &player->actor;
     for (Actor* p = play->actorCtx.actorLists[ACTORCAT_PROP].head; p != nullptr; p = p->next) {
         if (p->update == nullptr || p->parent != nullptr || !ShipCrewPlayer_CanLiftContextActor(p))
@@ -662,7 +670,7 @@ Actor* Pilot_FindContextProp(PlayState* play, Player* player) {
         const f32 dx = p->world.pos.x - actor->world.pos.x;
         const f32 dz = p->world.pos.z - actor->world.pos.z;
         const f32 ds = dx * dx + dz * dz;
-        if (ds >= bestDistance || std::fabs(p->world.pos.y - actor->world.pos.y) > 23.0f)
+        if (ds >= bestDistance || std::fabs(p->world.pos.y - actor->world.pos.y) > 30.0f)
             continue;
         const s16 toward = Math_Atan2S(dx, dz);
         if (ABS((s16)(toward - actor->shape.rot.y)) > 0x3300)
