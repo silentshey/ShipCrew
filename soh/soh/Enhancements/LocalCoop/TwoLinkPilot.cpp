@@ -32,6 +32,7 @@ f32 ShipCrewPlayer_CalcNativeAnalogSpeed(Player* player, f32 magnitude, s32 curv
 void ShipCrewPlayer_ApplyNativeAirMotion(Player* player, f32 speedTarget, s16 yawTarget);
 s32 ShipCrewPlayer_ApplyNativeIdleBrake(Player* player);
 LinkAnimationHeader* ShipCrewPlayer_SelectNativeAutoJump(Player* player, f32* verticalSpeed);
+s32 ShipCrewPlayer_ShouldNativeAutoJump(Player* player, s32 prevFloorProperty, f32 yDistToFloor, s16 yawDelta);
 void ShipCrewPlayer_StartNativeRollClip(PlayState* play, Player* player, f32 waterSpeedFactor);
 LinkAnimationHeader* ShipCrewPlayer_SelectNativeDodge(s32 direction, s32 landing);
 f32 ShipCrewPlayer_NativeDodgeVerticalSpeed(s32 direction);
@@ -721,10 +722,10 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
     // Player 1's autojump starts on BGCHECKFLAG_GROUND_LEAVE for a real drop,
     // with forward momentum and an unobstructed facing direction. Never
     // assign a manual jump button to P2.
-    if (wasGrounded && !grounded && (actor->bgCheckFlags & BGCHECKFLAG_GROUND_LEAVE) &&
-        sPilot.traversal != PilotTraversal::AutoJump && actor->speedXZ > 3.0f &&
-        std::abs(static_cast<s32>(static_cast<s16>(actor->world.rot.y - actor->shape.rot.y))) < 0x2000 &&
-        actor->world.pos.y - actor->floorHeight > 20.0f) {
+    if (wasGrounded && !grounded && sPilot.traversal != PilotTraversal::AutoJump &&
+        ShipCrewPlayer_ShouldNativeAutoJump(
+            player, player->floorProperty, actor->world.pos.y - actor->floorHeight,
+            static_cast<s16>(player->yaw - actor->shape.rot.y))) {
         f32 jumpSpeed;
         LinkAnimationHeader* nativeAnim = ShipCrewPlayer_SelectNativeAutoJump(player, &jumpSpeed);
         SPDLOG_INFO("[ShipCrew] P2 autojump ground-leave: pos=({}, {}, {}) floor={} speed={}", actor->world.pos.x,
@@ -1381,6 +1382,9 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         Actor_UpdateBgCheckInfo(play, actor, 26.0f, player->ageProperties->wallCheckRadius,
                                 player->ageProperties->ceilingCheckHeight, 0x3F);
         if (actor->floorPoly != nullptr && (actor->bgCheckFlags & BGCHECKFLAG_GROUND)) {
+            // Remember P2's own native floor property for the NEXT frame's
+            // ground-leave gate. P1 already does this in its collision pass.
+            player->floorProperty = func_80041EA4(&play->colCtx, actor->floorPoly, actor->floorBgId);
             // Link's floor pitch is sampled in the direction of travel and
             // feeds directly into the vanilla analog speed curve next frame.
             const f32 nx = COLPOLY_GET_NORMAL(actor->floorPoly->normal.x);
