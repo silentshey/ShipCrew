@@ -768,10 +768,9 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         }
         player->unk_880 = speedLimit;
         const f32 nativeTarget =
-            canAct && moving
-                ? ShipCrewPlayer_CalcGroundSpeedTarget(stickMagnitude, speedLimit, player->floorPitch,
-                                                       !hostileLock && !sPilot.parallelTargeting)
-                : 0.0f;
+            canAct && moving ? ShipCrewPlayer_CalcGroundSpeedTarget(stickMagnitude, speedLimit, player->floorPitch,
+                                                                    !hostileLock && !sPilot.parallelTargeting)
+                             : 0.0f;
         if (sPilot.rollFrames > 0) {
             actor->speedXZ = sPilot.rollSpeed;
             actor->world.rot.y = sPilot.rollYaw;
