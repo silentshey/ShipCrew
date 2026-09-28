@@ -5450,7 +5450,6 @@ s32 ShipCrewPlayer_QueryLedge(PlayState* play, Player* player, f32* outRise, Vec
     return rise >= age->unk_18 ? PLAYER_LEDGE_CLIMB_3 : PLAYER_LEDGE_CLIMB_2;
 }
 
-
 // Query the actual WALL_FLAG_LADDER collision surface used by P1, rather
 // than treating every ordinary climbable ledge as a ladder. This is safe for
 // an independent P2 actor: no global action, input, or camera is modified.
@@ -5502,8 +5501,7 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
             end.x += dx * (radius + 16.0f);
             end.z += dz * (radius + 16.0f);
         }
-        if (!BgCheck_EntityLineTest1(&play->colCtx, &start, &end, &hit, &wall, true, false, false, true,
-                                     &bgId) ||
+        if (!BgCheck_EntityLineTest1(&play->colCtx, &start, &end, &hit, &wall, true, false, false, true, &bgId) ||
             wall == NULL || !(SurfaceType_GetWallFlags(&play->colCtx, wall, bgId) & WALL_FLAG_LADDER)) {
             continue;
         }
@@ -5524,8 +5522,7 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
         outAnchor->x = hit.x + side * nx * (radius - 1.0f);
         outAnchor->z = hit.z + side * nz * (radius - 1.0f);
         outAnchor->y = pos.y;
-        *outFacing = side > 0.0f ? (s16)(Math_Atan2S(nz, nx) + 0x8000)
-                                 : Math_Atan2S(nz, nx);
+        *outFacing = side > 0.0f ? (s16)(Math_Atan2S(nz, nx) + 0x8000) : Math_Atan2S(nz, nx);
         *outTopY = fromTop ? pos.y : maxY;
         *outBottomY = fromTop ? minY : pos.y;
         // For segmented ladder polygons there may be a lower ground floor
