@@ -50,6 +50,10 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
                                f32* topY, s16 approachYaw);
 s32 ShipCrewPlayer_QueryCrawlspace(PlayState* play, Player* player, Vec3f* center);
 s32 ShipCrewPlayer_ShouldLeaveCrawlspace(PlayState* play, Player* player, f32 crawlSpeed);
+s32 ShipCrewPlayer_BeginNativeLedgeStep(PlayState* play, Player* player, const Vec3f* stand, s16 face,
+                                       f32 rise, s32 ledgeType);
+s32 ShipCrewPlayer_TickNativeLedgeForPilot(PlayState* play, Player* player, Input* input);
+void ShipCrewPlayer_CancelNativeLedgeForPilot(PlayState* play, Player* player);
 s32 ShipCrewPlayer_QueryNativeVine(PlayState* play, Player* player, s16 approachYaw, Vec3f* anchor, s16* facing,
                                    f32* bottomY, f32* topY);
 s32 ShipCrewPlayer_CanLiftContextActor(Actor* actor);
@@ -142,6 +146,7 @@ struct PilotRuntime {
     f32 ledgeRise = 0.0f;
     Vec3f ledgeStand = {};
     Vec3f hangAnchor = {};
+    bool nativeLedgeStep = false;
     Vec3f climbStart = {};
     s16 ledgeFacing = 0;
     PilotTraversal traversal = PilotTraversal::None;
@@ -207,6 +212,10 @@ LinkAnimationHeader* Pilot_Animation(const char* asset) {
 }
 
 void Pilot_ClearTraversal(Actor* actor, Player* player) {
+    if (sPilot.nativeLedgeStep) {
+        ShipCrewPlayer_CancelNativeLedgeForPilot(gPlayState, player);
+        sPilot.nativeLedgeStep = false;
+    }
     sPilot.traversal = PilotTraversal::None;
     sPilot.ledgeProbeFrames = 0;
     player->stateFlags1 &= ~(PLAYER_STATE1_HANGING_OFF_LEDGE | PLAYER_STATE1_CLIMBING_LEDGE | PLAYER_STATE1_JUMPING);
@@ -229,6 +238,18 @@ void Pilot_BeginClimb(Player* player, PlayState* play, s32 type, bool fromHang) 
     sPilot.climbStart = actor->world.pos;
     SPDLOG_INFO("[ShipCrew] P2 climb: fromHang={} startY={} targetY={}", fromHang, sPilot.climbStart.y,
                 sPilot.ledgeStand.y);
+    // Grounded medium steps now use P1's EXACT setup/shape offset AND P1's
+    // Player_Action_80845668. Hanging and high jumps remain isolated pilot
+    // actions until their additional native cutscene transitions are scoped.
+    if (!fromHang && (type == PLAYER_LEDGE_CLIMB_2 || type == PLAYER_LEDGE_CLIMB_3) &&
+        ShipCrewPlayer_BeginNativeLedgeStep(play, player, &sPilot.ledgeStand, sPilot.ledgeFacing,
+                                           sPilot.ledgeRise, type)) {
+        sPilot.nativeLedgeStep = true;
+        sPilot.traversal = PilotTraversal::Climbing;
+        sPilot.ledgeCooldownFrames = 18;
+        SPDLOG_INFO("[ShipCrew] P2 original P1 ledge action started: type={}", type);
+        return;
+    }
     actor->prevPos = actor->world.pos;
     actor->velocity.y = 0.0f;
     actor->speedXZ = player->linearVelocity = 0.0f;
@@ -317,6 +338,17 @@ bool Pilot_UpdateTraversal(Player* player, PlayState* play, const OSContPad& pad
         return false;
     }
 
+    if (sPilot.traversal == PilotTraversal::Climbing && sPilot.nativeLedgeStep) {
+        const bool stillClimbing = ShipCrewPlayer_TickNativeLedgeForPilot(play, player, &play->state.input[1]);
+        if (!stillClimbing) {
+            Pilot_ClearTraversal(actor, player);
+            sPilot.landingFrames = kLandingFrames;
+            sPilot.ledgeCooldownFrames = 20;
+            SPDLOG_INFO("[ShipCrew] P2 original ledge action completed");
+        }
+        Actor_SetFocus(actor, 40.0f);
+        return true;
+    }
     actor->speedXZ = player->linearVelocity = 0.0f;
     actor->velocity.y = 0.0f;
     actor->gravity = 0.0f;
