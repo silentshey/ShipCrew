@@ -491,7 +491,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
             } else {
                 if (canAct && moving)
                     Math_ScaledStepToS(&player->yaw, desiredYaw,
-                                       static_cast<f32>(std::abs(static_cast<s32>(yawDiff))) * 0.1f);
+                                       static_cast<s16>(std::abs(static_cast<s32>(yawDiff)) * 0.1f));
                 // OoT's grounded walking and running states use distinct
                 // speed multipliers and asymmetric speed steps.
                 const bool running = motionTarget > 4.9f;
