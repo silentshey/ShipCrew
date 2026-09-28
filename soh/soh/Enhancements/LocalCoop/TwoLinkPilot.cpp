@@ -50,6 +50,7 @@ s32 ShipCrewPlayer_QueryLadder(PlayState* play, Player* player, s32 fromTop, Vec
                                f32* topY, s16 approachYaw);
 s32 ShipCrewPlayer_QueryCrawlspace(PlayState* play, Player* player, Vec3f* center);
 s32 ShipCrewPlayer_ShouldLeaveCrawlspace(PlayState* play, Player* player, f32 crawlSpeed);
+s32 ShipCrewPlayer_TryPilotSharedSceneExit(PlayState* play, Player* p2);
 s32 ShipCrewPlayer_BeginNativeLedgeStep(PlayState* play, Player* player, const Vec3f* stand, s16 face,
                                        f32 rise, s32 ledgeType);
 s32 ShipCrewPlayer_TickNativeLedgeForPilot(PlayState* play, Player* player, Input* input);
@@ -1540,6 +1541,14 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         }
     } else {
         Actor_UpdateBgCheckInfo(play, actor, kWallCheckHeight, kWallCheckRadius, kCeilingCheckHeight, 0x1D);
+    }
+    // Only one scene can be loaded by the original engine. When BOTH
+    // Links reach the same vicinity, let P2 request P1's native floor-exit
+    // transaction; independent far-away scene streaming is unsupported.
+    if (nativeMovement && canAct && ShipCrewPlayer_TryPilotSharedSceneExit(play, player)) {
+        SPDLOG_INFO("[ShipCrew] P2 requested native shared scene exit with P1 nearby");
+        Actor_SetFocus(actor, 40.0f);
+        return;
     }
     if (wasGrounded && !(actor->bgCheckFlags & BGCHECKFLAG_GROUND))
         sPilot.takeoffY = actor->world.pos.y;
