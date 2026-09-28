@@ -164,7 +164,7 @@ void Pilot_BeginClimb(Player* player, PlayState* play, s32 type, bool fromHang) 
     if (player->ageProperties == nullptr)
         return;
 
-    const f32 rise = sPilot.ledgeStand.y - actor->world.pos.y;
+    const f32 rise = fromHang ? sPilot.ledgeRise : sPilot.ledgeStand.y - actor->world.pos.y;
     actor->world.pos = sPilot.ledgeStand;
     actor->velocity.y = 0.0f;
     actor->speedXZ = player->linearVelocity = 0.0f;
