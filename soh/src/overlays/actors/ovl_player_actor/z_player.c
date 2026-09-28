@@ -15744,6 +15744,17 @@ s32 ShipCrewPlayer_TickPilotSword(PlayState* play, Player* player, const Input* 
     return ShipCrewPlayer_IsPilotSwordAction(player);
 }
 
+// P1 performs these resets after its action callback and BEFORE limb draw.
+// Keep the same collision lifetime for the P2 sword and shield instances.
+void ShipCrewPlayer_ResetPilotCombatCollision(PlayState* play, Player* player) {
+    if (play == NULL || player == NULL)
+        return;
+    Collider_ResetQuadAT(play, &player->meleeWeaponQuads[0].base);
+    Collider_ResetQuadAT(play, &player->meleeWeaponQuads[1].base);
+    Collider_ResetQuadAC(play, &player->shieldQuad.base);
+    Collider_ResetQuadAT(play, &player->shieldQuad.base);
+}
+
 void ShipCrewPlayer_EndPilotSword(PlayState* play, Player* player) {
     if (play == NULL || player == NULL)
         return;
