@@ -1858,6 +1858,14 @@ static RegisterShipInitFunc sRegisterPilot(Pilot_RegisterHooks);
 
 } // namespace
 
+extern "C" s32 ShipCrewActor_IsSecondPlayerWithinXZ(PlayState* play, Actor* actor, f32 distance) {
+    if (play == nullptr || actor == nullptr || sPilot.actor == nullptr || FindPilotActor(play) != sPilot.actor)
+        return false;
+    const f32 dx = actor->world.pos.x - sPilot.actor->world.pos.x;
+    const f32 dz = actor->world.pos.z - sPilot.actor->world.pos.z;
+    return (dx * dx + dz * dz) < distance * distance;
+}
+
 // P2's independently allocated native camera is updated once AFTER the
 // engine's P1 camera, never during actor update or scene rendering.
 extern "C" s32 ShipCrewCamera_GetSecondParallel(PlayState* play) {
