@@ -15,6 +15,8 @@
 
 #define FLAGS ACTOR_FLAG_THROW_ONLY
 
+s32 ShipCrewActor_IsSecondPlayerWithinXZ(PlayState* play, Actor* actor, f32 distance);
+
 void EnIshi_Init(Actor* thisx, PlayState* play);
 void EnIshi_Destroy(Actor* thisx, PlayState* play);
 void EnIshi_Update(Actor* thisx, PlayState* play);
@@ -379,11 +381,12 @@ void EnIshi_Wait(EnIshi* this, PlayState* play) {
         sFragmentSpawnFuncs[type](this, play);
         sDustSpawnFuncs[type](this, play);
         Actor_Kill(&this->actor);
-    } else if (this->actor.xzDistToPlayer < 600.0f) {
+    } else if ((this->actor.xzDistToPlayer < 600.0f) ||
+               ShipCrewActor_IsSecondPlayerWithinXZ(play, &this->actor, 600.0f)) {
         Collider_UpdateCylinder(&this->actor, &this->collider);
         this->collider.base.acFlags &= ~AC_HIT;
         CollisionCheck_SetAC(play, &play->colChkCtx, &this->collider.base);
-        if (this->actor.xzDistToPlayer < 400.0f) {
+        if ((this->actor.xzDistToPlayer < 400.0f) || ShipCrewActor_IsSecondPlayerWithinXZ(play, &this->actor, 400.0f)) {
             CollisionCheck_SetOC(play, &play->colChkCtx, &this->collider.base);
             if (this->actor.xzDistToPlayer < 90.0f) {
                 // GI_NONE in these cases allows the player to lift the actor
