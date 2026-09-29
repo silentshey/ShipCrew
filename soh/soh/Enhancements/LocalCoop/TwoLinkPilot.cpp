@@ -53,6 +53,13 @@ s32 ShipCrewPlayer_QueryNativeVine(PlayState* play, Player* player, s16 approach
                                    f32* bottomY, f32* topY);
 s32 ShipCrewPlayer_CanLiftContextActor(Actor* actor);
 s32 Player_CanThrowCarriedActor(Player* player, Actor* actor);
+void ShipCrewPlayer_BeginNativeCrawl(PlayState* play, Player* player, const Vec3f* center);
+s32 ShipCrewPlayer_IsNativeCrawlAction(Player* player);
+s32 ShipCrewPlayer_UpdateNativeCrawlForPilot(PlayState* play, Player* player, Input* input);
+s32 ShipCrewPlayer_TryNativeLedgeForPilot(PlayState* play, Player* player, Input* input);
+s32 ShipCrewPlayer_IsNativeLedgeAction(Player* player);
+s32 ShipCrewPlayer_UpdateNativeLedgeForPilot(PlayState* play, Player* player, Input* input);
+s32 ShipCrewPlayer_HandlePilotSceneExit(PlayState* play, Player* player);
 }
 
 // The experimental switch lives in the existing Controls settings screen.
@@ -506,6 +513,9 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
 
     const bool grounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
     const bool falling = actor->velocity.y < 0.0f;
+    // Grounded mantles/fences use the SAME original Link action handler.
+    if (grounded)
+        return false;
     // After a verified ladder landing, don't autojump or re-mantle the
     // adjacent railing/wall during the short transition to normal walking.
     if (sPilot.ladderExitGraceFrames > 0) {
@@ -631,7 +641,7 @@ Actor* Pilot_LiveProp(PlayState* play, Actor* ptr) {
 }
 Actor* Pilot_FindContextProp(PlayState* play, Player* player) {
     Actor* best = nullptr;
-    f32 bestDistance = 50.0f * 50.0f;
+    f32 bestDistance = 100.0f * 100.0f;
     Actor* actor = &player->actor;
     for (Actor* p = play->actorCtx.actorLists[ACTORCAT_PROP].head; p != nullptr; p = p->next) {
         if (p->update == nullptr || p->parent != nullptr || !ShipCrewPlayer_CanLiftContextActor(p))
@@ -643,7 +653,9 @@ Actor* Pilot_FindContextProp(PlayState* play, Player* player) {
         const f32 dx = p->world.pos.x - actor->world.pos.x;
         const f32 dz = p->world.pos.z - actor->world.pos.z;
         const f32 ds = dx * dx + dz * dz;
-        if (ds >= bestDistance || std::fabs(p->world.pos.y - actor->world.pos.y) > 23.0f)
+        const f32 nativeReach = p->id == ACTOR_EN_ISHI ? 50.0f : 100.0f;
+        if (ds >= bestDistance || ds >= nativeReach * nativeReach ||
+            std::fabs(p->world.pos.y - actor->world.pos.y) > 30.0f)
             continue;
         const s16 toward = Math_Atan2S(dx, dz);
         if (ABS((s16)(toward - actor->shape.rot.y)) > 0x3300)
@@ -738,88 +750,53 @@ bool Pilot_TryCrawl(Player* player, PlayState* play, bool enabled, bool canAct, 
         sPilot.rollFrames > 0 || sPilot.dodge != PilotDodge::None || player->ageProperties == nullptr ||
         !(actor->bgCheckFlags & BGCHECKFLAG_GROUND) || !(actor->bgCheckFlags & BGCHECKFLAG_PLAYER_WALL_INTERACT))
         return false;
+
     Vec3f center = {};
     if (!ShipCrewPlayer_QueryCrawlspace(play, player, &center))
         return false;
+
     const s16 forward = actor->wallYaw + 0x8000;
     if (ABS((s16)(actor->shape.rot.y - forward)) >= 0x3000)
         return false;
-    const CollisionPoly* wall = actor->wallPoly;
-    const f32 standOff =
-        player->distToInteractWall > 0.0f ? player->distToInteractWall : player->ageProperties->wallCheckRadius - 1.0f;
-    actor->prevPos = actor->world.pos;
-    actor->world.pos.x = center.x + standOff * COLPOLY_GET_NORMAL(wall->normal.x);
-    actor->world.pos.z = center.z + standOff * COLPOLY_GET_NORMAL(wall->normal.z);
+
+    // As with P1, release lock-on before crawl and let the private camera
+    // return to its normal native follow mode.
+    sPilot.lockedTarget = nullptr;
+    sPilot.parallelTargeting = false;
+    sPilot.parallelRecenterFrames = 0;
+    player->focusActor = nullptr;
+    player->stateFlags1 &= ~(PLAYER_STATE1_Z_TARGETING | PLAYER_STATE1_PARALLEL);
     sPilot.crawl = PilotCrawl::Enter;
-    sPilot.crawlDistance = 0.0f;
-    sPilot.crawlYaw = forward;
-    actor->shape.rot.y = actor->world.rot.y = player->yaw = forward;
-    actor->speedXZ = actor->velocity.y = player->linearVelocity = 0.0f;
-    actor->gravity = 0.0f;
-    player->stateFlags2 |= PLAYER_STATE2_CRAWLING;
-    LinkAnimationHeader* animation = Pilot_Animation(gPlayerAnim_link_child_tunnel_start);
-    player->skelAnime.movementFlags = 0x9D;
-    LinkAnimation_Change(play, &player->skelAnime, animation, 1.0f, 0.0f, Animation_GetLastFrame(animation),
-                         ANIMMODE_ONCE, 0.0f);
-    SPDLOG_INFO("[ShipCrew] P2 crawlspace entry (shared native P1 polygon alignment)");
+    ShipCrewPlayer_BeginNativeCrawl(play, player, &center);
+    SPDLOG_INFO("[ShipCrew] P2 entered native P1 crawl action");
     return true;
 }
+
 bool Pilot_UpdateCrawl(Player* player, PlayState* play, const OSContPad& pad) {
     if (sPilot.crawl == PilotCrawl::None)
         return false;
-    Actor* actor = &player->actor;
-    actor->prevPos = actor->world.pos;
-    actor->speedXZ = actor->velocity.y = player->linearVelocity = actor->gravity = 0.0f;
-    actor->shape.rot.y = actor->world.rot.y = player->yaw = sPilot.crawlYaw;
-    player->stateFlags2 |= PLAYER_STATE2_CRAWLING;
-    if (sPilot.crawl != PilotCrawl::Move) {
-        const bool complete = LinkAnimation_Update(play, &player->skelAnime) != 0;
-        ShipCrewPlayer_QueueNativeAnimMovement(play, player);
-        if (complete) {
-            player->skelAnime.movementFlags = 0;
-            if (sPilot.crawl == PilotCrawl::Enter) {
-                sPilot.crawl = PilotCrawl::Move;
-            } else {
-                sPilot.crawl = PilotCrawl::None;
-                sPilot.contextCooldown = 20;
-                player->stateFlags2 &= ~PLAYER_STATE2_CRAWLING;
-                ShipCrewPlayer_ResetNativeGravity(player);
-            }
-        }
-    } else {
-        // P1's tunnel motion: signed stick Y * 0.03, no normal running.
-        const f32 step = pad.stick_y * 0.03f;
-        if (std::fabs(step) > 0.15f) {
-            const s16 facing = step > 0.0f ? sPilot.crawlYaw : (s16)(sPilot.crawlYaw + 0x8000);
-            Vec3f from = actor->world.pos;
-            from.y += 26.0f;
-            Vec3f to = from;
-            to.x += Math_SinS(facing) * 30.0f;
-            to.z += Math_CosS(facing) * 30.0f;
-            Vec3f hit = {};
-            CollisionPoly* wall = nullptr;
-            s32 bgId = BGCHECK_SCENE;
-            const bool exitWall =
-                sPilot.crawlDistance > 22.0f &&
-                BgCheck_EntityLineTest1(&play->colCtx, &from, &to, &hit, &wall, true, false, false, true, &bgId) &&
-                wall != nullptr && (SurfaceType_GetWallFlags(&play->colCtx, wall, bgId) & WALL_FLAG_CRAWLSPACE);
-            if (exitWall) {
-                sPilot.crawl = PilotCrawl::Exit;
-                LinkAnimationHeader* anim = Pilot_Animation(step > 0.0f ? gPlayerAnim_link_child_tunnel_end
-                                                                        : gPlayerAnim_link_child_tunnel_start);
-                const f32 last = Animation_GetLastFrame(anim);
-                player->skelAnime.movementFlags = 0x9D;
-                LinkAnimation_Change(play, &player->skelAnime, anim, step > 0.0f ? 1.0f : -1.0f,
-                                     step > 0.0f ? 0.0f : last, step > 0.0f ? last : 0.0f, ANIMMODE_ONCE, 0.0f);
-                SPDLOG_INFO("[ShipCrew] P2 crawlspace exit");
-            } else {
-                actor->world.pos.x += Math_SinS(sPilot.crawlYaw) * step;
-                actor->world.pos.z += Math_CosS(sPilot.crawlYaw) * step;
-                sPilot.crawlDistance += std::fabs(step);
-            }
-        }
+
+    (void)pad;
+    if (!ShipCrewPlayer_IsNativeCrawlAction(player)) {
+        sPilot.crawl = PilotCrawl::None;
+        sPilot.contextCooldown = 20;
+        player->stateFlags2 &= ~PLAYER_STATE2_CRAWLING;
+        ShipCrewPlayer_ResetNativeGravity(player);
+        return false;
     }
-    Actor_SetFocus(actor, 25.0f);
+
+    const bool stillCrawling = ShipCrewPlayer_UpdateNativeCrawlForPilot(play, player, &play->state.input[1]) != 0;
+    if (!stillCrawling) {
+        sPilot.crawl = PilotCrawl::None;
+        sPilot.contextCooldown = 20;
+        player->stateFlags2 &= ~PLAYER_STATE2_CRAWLING;
+        ShipCrewPlayer_ResetNativeGravity(player);
+        SPDLOG_INFO("[ShipCrew] P2 native crawl completed; standing restored");
+    } else {
+        sPilot.crawl = PilotCrawl::Move;
+    }
+
+    Actor_SetFocus(&player->actor, 25.0f);
     return true;
 }
 
@@ -996,6 +973,23 @@ void Pilot_Init(Actor* actor, PlayState* play) {
     NameTag_RegisterForActorWithOptions(actor, "P2 PILOT", {});
 }
 
+// Reuse the initialized original Player cylinder; register it exactly ONCE
+// after each P2 update, including early exits from native climbing/crawling.
+struct PilotNativeBodyCollision {
+    PlayState* play;
+    Player* player;
+    ~PilotNativeBodyCollision() {
+        if (player->ageProperties == nullptr)
+            return;
+        Collider_UpdateCylinder(&player->actor, &player->cylinder);
+        if (!(player->stateFlags2 & PLAYER_STATE2_FROZEN) &&
+            !(player->stateFlags1 & (PLAYER_STATE1_DEAD | PLAYER_STATE1_HANGING_OFF_LEDGE |
+                                     PLAYER_STATE1_CLIMBING_LEDGE | PLAYER_STATE1_ON_HORSE))) {
+            CollisionCheck_SetOC(play, &play->colChkCtx, &player->cylinder.base);
+        }
+    }
+};
+
 void Pilot_Update(Actor* actor, PlayState* play) {
     Player* player = reinterpret_cast<Player*>(actor);
     if (GET_PLAYER(play) == nullptr || GET_PLAYER(play) == player) {
@@ -1005,6 +999,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         sPilot = {};
         sPilot.actor = actor;
     }
+    PilotNativeBodyCollision registerBodyCollider{play, player};
 
     if (sPilot.ladderExitGraceFrames > 0)
         --sPilot.ladderExitGraceFrames;
@@ -1127,6 +1122,13 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     // rolls while running; there is no manual A-button jump.
     const bool nativeMovement = CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0;
     const bool nativeTraversal = nativeMovement && CVarGetInteger(SHIPCREW_NATIVE_TRAVERSAL_CVAR, 0) != 0;
+    if (nativeTraversal && ShipCrewPlayer_IsNativeLedgeAction(player)) {
+        ShipCrewPlayer_UpdateNativeLedgeForPilot(play, player, &play->state.input[1]);
+        if (!ShipCrewPlayer_IsNativeLedgeAction(player))
+            sPilot.ledgeCooldownFrames = 18;
+        Actor_SetFocus(actor, 40.0f);
+        return;
+    }
     if (Pilot_TryCrawl(player, play, nativeTraversal, canAct, pressed))
         return;
     // Native P1 gives environmental pickup priority over the A-button roll.
@@ -1150,6 +1152,16 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         player->currentTunic = GET_PLAYER(play)->currentTunic;
         player->currentBoots = GET_PLAYER(play)->currentBoots;
         player->currentShield = GET_PLAYER(play)->currentShield;
+        return;
+    }
+    if (nativeTraversal && canAct && wasGrounded && sPilot.ledgeCooldownFrames == 0 &&
+        heldBomb == nullptr && carriedProp == nullptr && sPilot.pickupCandidate == nullptr &&
+        sPilot.ladder == PilotLadder::None && sPilot.traversal == PilotTraversal::None &&
+        sPilot.rollFrames == 0 && sPilot.itemFrames == 0 &&
+        ShipCrewPlayer_TryNativeLedgeForPilot(play, player, &play->state.input[1])) {
+        SPDLOG_INFO("[ShipCrew] P2 original Link ledge action began type={} rise={}",
+                    player->ledgeClimbType, player->yDistToLedge);
+        Actor_SetFocus(actor, 40.0f);
         return;
     }
     if (nativeTraversal && Pilot_UpdateTraversal(player, play, pad, pressed, canAct)) {
@@ -1439,6 +1451,12 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         }
     } else {
         Actor_UpdateBgCheckInfo(play, actor, kWallCheckHeight, kWallCheckRadius, kCeilingCheckHeight, 0x1D);
+    }
+    // Scene resources remain shared; this is a group exit requested by P2.
+    if (nativeMovement && canAct && ShipCrewPlayer_HandlePilotSceneExit(play, player)) {
+        SPDLOG_INFO("[ShipCrew] P2 triggered original Link group floor exit");
+        Actor_SetFocus(actor, 40.0f);
+        return;
     }
     if (wasGrounded && !(actor->bgCheckFlags & BGCHECKFLAG_GROUND))
         sPilot.takeoffY = actor->world.pos.y;
@@ -1771,6 +1789,15 @@ extern "C" Actor* ShipCrewCamera_GetSecondTarget(PlayState* play) {
         !Pilot_TargetIsLive(play, sPilot.lockedTarget))
         return nullptr;
     return sPilot.lockedTarget;
+}
+
+// Environmental actors can locate P2 even when split-screen rendering is off.
+extern "C" Player* ShipCrewPilot_GetInteractionPlayer(PlayState* play) {
+    if (play == nullptr || GET_PLAYER(play) == nullptr || CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0 ||
+        CVarGetInteger(CVAR_ENHANCEMENT("IvanCoopModeEnabled"), 0) != 0)
+        return nullptr;
+    Actor* actor = FindPilotActor(play);
+    return actor != nullptr && actor == sPilot.actor ? reinterpret_cast<Player*>(actor) : nullptr;
 }
 
 extern "C" Player* ShipCrewCamera_GetNativeSecondPlayer(PlayState* play) {
