@@ -513,8 +513,10 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
 
     const bool grounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
     const bool falling = actor->velocity.y < 0.0f;
-    // Grounded mantles/fences use the SAME original Link action handler.
-    if (grounded)
+    // P1's native dispatcher owns medium steps. Retain existing autojump
+    // and high-ledge behavior until those native actions are fully scoped.
+    if (grounded && (player->ledgeClimbType == PLAYER_LEDGE_CLIMB_2 ||
+                     player->ledgeClimbType == PLAYER_LEDGE_CLIMB_3))
         return false;
     // After a verified ladder landing, don't autojump or re-mantle the
     // adjacent railing/wall during the short transition to normal walking.
