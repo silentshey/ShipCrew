@@ -515,8 +515,7 @@ bool Pilot_TryTraversal(Player* player, PlayState* play, bool wasGrounded, bool 
     const bool falling = actor->velocity.y < 0.0f;
     // P1's native dispatcher owns medium steps. Retain existing autojump
     // and high-ledge behavior until those native actions are fully scoped.
-    if (grounded && (player->ledgeClimbType == PLAYER_LEDGE_CLIMB_2 ||
-                     player->ledgeClimbType == PLAYER_LEDGE_CLIMB_3))
+    if (grounded && (player->ledgeClimbType == PLAYER_LEDGE_CLIMB_2 || player->ledgeClimbType == PLAYER_LEDGE_CLIMB_3))
         return false;
     // After a verified ladder landing, don't autojump or re-mantle the
     // adjacent railing/wall during the short transition to normal walking.
