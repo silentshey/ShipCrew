@@ -2203,6 +2203,20 @@ void Actor_OfferGetItemNearby(Actor* actor, PlayState* play, s32 getItemId) {
     Actor_OfferGetItem(actor, play, getItemId, 50.0f, 10.0f);
 }
 
+Player* ShipCrewPilot_GetInteractionPlayer(PlayState* play);
+// Keep P1's native carry offers unchanged while allowing BOTH original
+// Player cylinders to activate stock object OC collision.
+s32 ShipCrewActor_IsSecondPlayerWithinXZ(PlayState* play, Actor* actor, f32 distance) {
+    if (play == NULL || actor == NULL || distance <= 0.0f)
+        return false;
+    Player* p2 = ShipCrewPilot_GetInteractionPlayer(play);
+    if (p2 == NULL)
+        return false;
+    const f32 dx = p2->actor.world.pos.x - actor->world.pos.x;
+    const f32 dz = p2->actor.world.pos.z - actor->world.pos.z;
+    return dx * dx + dz * dz < distance * distance;
+}
+
 void Actor_OfferCarry(Actor* actor, PlayState* play) {
     Actor_OfferGetItemNearby(actor, play, GI_NONE);
 }

@@ -15,6 +15,8 @@
 
 #define FLAGS (ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_THROW_ONLY)
 
+s32 ShipCrewActor_IsSecondPlayerWithinXZ(PlayState* play, Actor* actor, f32 distance);
+
 void EnKusa_Init(Actor* thisx, PlayState* play);
 void EnKusa_Destroy(Actor* thisx, PlayState* play);
 void EnKusa_Update(Actor* thisx, PlayState* play);
@@ -332,15 +334,20 @@ void EnKusa_Main(EnKusa* this, PlayState* play) {
         EnKusa_SetupCut(this);
         this->actor.flags |= ACTOR_FLAG_GRASS_DESTROYED;
     } else {
-        if (!(this->collider.base.ocFlags1 & OC1_TYPE_PLAYER) && (this->actor.xzDistToPlayer > 12.0f)) {
+        const s32 shipCrewP2Near12 = ShipCrewActor_IsSecondPlayerWithinXZ(play, &this->actor, 12.0f);
+        const s32 shipCrewP2Near100 = ShipCrewActor_IsSecondPlayerWithinXZ(play, &this->actor, 100.0f);
+        const s32 shipCrewP2Near400 = ShipCrewActor_IsSecondPlayerWithinXZ(play, &this->actor, 400.0f);
+        const s32 shipCrewP2Near600 = ShipCrewActor_IsSecondPlayerWithinXZ(play, &this->actor, 600.0f);
+        if (!(this->collider.base.ocFlags1 & OC1_TYPE_PLAYER) && (this->actor.xzDistToPlayer > 12.0f) &&
+            !shipCrewP2Near12) {
             this->collider.base.ocFlags1 |= OC1_TYPE_PLAYER;
         }
 
-        if (this->actor.xzDistToPlayer < 600.0f) {
+        if ((this->actor.xzDistToPlayer < 600.0f) || shipCrewP2Near600) {
             Collider_UpdateCylinder(&this->actor, &this->collider);
             CollisionCheck_SetAC(play, &play->colChkCtx, &this->collider.base);
 
-            if (this->actor.xzDistToPlayer < 400.0f) {
+            if ((this->actor.xzDistToPlayer < 400.0f) || shipCrewP2Near400) {
                 CollisionCheck_SetOC(play, &play->colChkCtx, &this->collider.base);
                 if (this->actor.xzDistToPlayer < 100.0f) {
                     Actor_OfferCarry(&this->actor, play);
