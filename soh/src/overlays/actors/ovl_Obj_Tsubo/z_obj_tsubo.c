@@ -240,6 +240,8 @@ void ObjTsubo_SetupIdle(ObjTsubo* this) {
     this->actionFunc = ObjTsubo_Idle;
 }
 
+s32 ShipCrewActor_IsSecondPlayerWithinXZ(PlayState* play, Actor* actor, f32 distance);
+
 void ObjTsubo_Idle(ObjTsubo* this, PlayState* play) {
     s32 pad;
     s16 temp_v0;
@@ -259,11 +261,13 @@ void ObjTsubo_Idle(ObjTsubo* this, PlayState* play) {
         SoundSource_PlaySfxAtFixedWorldPos(play, &this->actor.world.pos, 20, NA_SE_EV_POT_BROKEN);
         Actor_Kill(&this->actor);
     } else {
-        if (this->actor.xzDistToPlayer < 600.0f) {
+        if (this->actor.xzDistToPlayer < 600.0f ||
+            ShipCrewActor_IsSecondPlayerWithinXZ(play, &this->actor, 600.0f)) {
             Collider_UpdateCylinder(&this->actor, &this->collider);
             this->collider.base.acFlags &= ~AC_HIT;
             CollisionCheck_SetAC(play, &play->colChkCtx, &this->collider.base);
-            if (this->actor.xzDistToPlayer < 150.0f) {
+            if (this->actor.xzDistToPlayer < 150.0f ||
+                ShipCrewActor_IsSecondPlayerWithinXZ(play, &this->actor, 150.0f)) {
                 CollisionCheck_SetOC(play, &play->colChkCtx, &this->collider.base);
             }
         }
