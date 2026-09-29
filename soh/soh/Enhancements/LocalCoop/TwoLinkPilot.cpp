@@ -982,6 +982,13 @@ struct PilotNativeBodyCollision {
     ~PilotNativeBodyCollision() {
         if (player->ageProperties == nullptr)
             return;
+        // P1 uses its ordinary movable mass for normal play. The pilot's
+        // old always-IMMOVABLE NPC mass prevented genuine body response
+        // against stock collision props even after enabling OC.
+        player->actor.colChkInfo.mass =
+            (player->stateFlags1 & (PLAYER_STATE1_DEAD | PLAYER_STATE1_IN_ITEM_CS | PLAYER_STATE1_IN_CUTSCENE))
+                ? MASS_IMMOVABLE
+                : 50;
         Collider_UpdateCylinder(&player->actor, &player->cylinder);
         if (!(player->stateFlags2 & PLAYER_STATE2_FROZEN) &&
             !(player->stateFlags1 & (PLAYER_STATE1_DEAD | PLAYER_STATE1_HANGING_OFF_LEDGE |
