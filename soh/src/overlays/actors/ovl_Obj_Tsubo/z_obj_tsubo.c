@@ -261,8 +261,7 @@ void ObjTsubo_Idle(ObjTsubo* this, PlayState* play) {
         SoundSource_PlaySfxAtFixedWorldPos(play, &this->actor.world.pos, 20, NA_SE_EV_POT_BROKEN);
         Actor_Kill(&this->actor);
     } else {
-        if (this->actor.xzDistToPlayer < 600.0f ||
-            ShipCrewActor_IsSecondPlayerWithinXZ(play, &this->actor, 600.0f)) {
+        if (this->actor.xzDistToPlayer < 600.0f || ShipCrewActor_IsSecondPlayerWithinXZ(play, &this->actor, 600.0f)) {
             Collider_UpdateCylinder(&this->actor, &this->collider);
             this->collider.base.acFlags &= ~AC_HIT;
             CollisionCheck_SetAC(play, &play->colChkCtx, &this->collider.base);
