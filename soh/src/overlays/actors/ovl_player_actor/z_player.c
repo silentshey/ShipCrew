@@ -13998,9 +13998,13 @@ s32 ShipCrewPlayer_TryNativeLedgeForPilot(PlayState* play, Player* player, Input
     sControlInput = input;
     sShipCrewPilotNativeLedge = true;
 
-    // Reuse P1's exact wall/fence/ledge classification and delay counters.
+    // P1's dispatcher also starts low autojumps and high jump actions.
+    // Retain the pilot's separate paths for those until their full native
+    // actions are scoped; P2's native ticker owns only medium climbs.
     Player_ProcessSceneCollision(play, player);
-    const s32 started = Player_ActionHandler_12(player, play);
+    const s32 mediumStep =
+        player->ledgeClimbType == PLAYER_LEDGE_CLIMB_2 || player->ledgeClimbType == PLAYER_LEDGE_CLIMB_3;
+    const s32 started = mediumStep ? Player_ActionHandler_12(player, play) : false;
 
     sShipCrewPilotNativeLedge = previousPilotLedge;
     sControlInput = previousInput;
