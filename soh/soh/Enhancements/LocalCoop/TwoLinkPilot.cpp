@@ -999,7 +999,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         sPilot = {};
         sPilot.actor = actor;
     }
-    PilotNativeBodyCollision registerBodyCollider{play, player};
+    PilotNativeBodyCollision registerBodyCollider{ play, player };
 
     if (sPilot.ladderExitGraceFrames > 0)
         --sPilot.ladderExitGraceFrames;
@@ -1154,13 +1154,12 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         player->currentShield = GET_PLAYER(play)->currentShield;
         return;
     }
-    if (nativeTraversal && canAct && wasGrounded && sPilot.ledgeCooldownFrames == 0 &&
-        heldBomb == nullptr && carriedProp == nullptr && sPilot.pickupCandidate == nullptr &&
-        sPilot.ladder == PilotLadder::None && sPilot.traversal == PilotTraversal::None &&
-        sPilot.rollFrames == 0 && sPilot.itemFrames == 0 &&
+    if (nativeTraversal && canAct && wasGrounded && sPilot.ledgeCooldownFrames == 0 && heldBomb == nullptr &&
+        carriedProp == nullptr && sPilot.pickupCandidate == nullptr && sPilot.ladder == PilotLadder::None &&
+        sPilot.traversal == PilotTraversal::None && sPilot.rollFrames == 0 && sPilot.itemFrames == 0 &&
         ShipCrewPlayer_TryNativeLedgeForPilot(play, player, &play->state.input[1])) {
-        SPDLOG_INFO("[ShipCrew] P2 original Link ledge action began type={} rise={}",
-                    player->ledgeClimbType, player->yDistToLedge);
+        SPDLOG_INFO("[ShipCrew] P2 original Link ledge action began type={} rise={}", player->ledgeClimbType,
+                    player->yDistToLedge);
         Actor_SetFocus(actor, 40.0f);
         return;
     }
