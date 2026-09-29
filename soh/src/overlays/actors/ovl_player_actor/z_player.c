@@ -13956,16 +13956,14 @@ s32 ShipCrewPlayer_UpdateNativeCrawlForPilot(PlayState* play, Player* player, In
 }
 
 s32 ShipCrewPlayer_HandlePilotSceneExit(PlayState* play, Player* player) {
-    if (play == NULL || player == NULL || player->actor.floorPoly == NULL ||
-        player->actor.floorBgId != BGCHECK_SCENE || !(player->actor.bgCheckFlags & BGCHECKFLAG_GROUND) ||
-        play->transitionTrigger != TRANS_TRIGGER_OFF ||
+    if (play == NULL || player == NULL || player->actor.floorPoly == NULL || player->actor.floorBgId != BGCHECK_SCENE ||
+        !(player->actor.bgCheckFlags & BGCHECKFLAG_GROUND) || play->transitionTrigger != TRANS_TRIGGER_OFF ||
         SurfaceType_GetSceneExitIndex(&play->colCtx, player->actor.floorPoly, player->actor.floorBgId) == 0)
         return false;
     // One global PlayState permits group transitions only. P2 may not steal
     // P1's active cutscene or a scene load already in progress.
     Player* p1 = GET_PLAYER(play);
-    if (p1 == NULL || p1 == player ||
-        (p1->stateFlags1 & (PLAYER_STATE1_IN_CUTSCENE | PLAYER_STATE1_LOADING)))
+    if (p1 == NULL || p1 == player || (p1->stateFlags1 & (PLAYER_STATE1_IN_CUTSCENE | PLAYER_STATE1_LOADING)))
         return false;
 
     ShipCrewPlayerStaticCollisionState saved;
