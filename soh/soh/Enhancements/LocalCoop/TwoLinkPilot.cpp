@@ -1827,6 +1827,8 @@ static RegisterShipInitFunc sRegisterPilot(Pilot_RegisterHooks);
 
 // P2's independently allocated native camera is updated once AFTER the
 // engine's P1 camera, never during actor update or scene rendering.
+extern "C" Player* ShipCrewPilot_GetInteractionPlayer(PlayState* play);
+
 extern "C" s32 ShipCrewCamera_GetSecondParallel(PlayState* play) {
     Player* p2 = ShipCrewPilot_GetInteractionPlayer(play);
     return p2 != nullptr && (p2->stateFlags1 & PLAYER_STATE1_PARALLEL) != 0;
