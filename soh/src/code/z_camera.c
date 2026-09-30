@@ -7870,8 +7870,10 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
         sShipCrewP2Camera.target = target;
         if (target != NULL)
             Camera_SetParam(&sShipCrewP2Camera, 8, target);
-        if (sShipCrewP2Camera.mode != desiredMode)
-            Camera_RequestMode(&sShipCrewP2Camera, desiredMode);
+        // P1 makes this request every frame from Player_UpdateCamAndSeqModes.
+        // Do the same here so TARGET/BATTLE/NORMAL recenter timing and mode
+        // internal flags remain as responsive as the primary camera.
+        Camera_RequestMode(&sShipCrewP2Camera, desiredMode);
     }
 
     // Reuse ordinary camera settings when P1 moves between 3D room types.
