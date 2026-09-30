@@ -45,6 +45,7 @@ s32 Camera_UpdateWater(Camera* camera);
 Player* ShipCrewCamera_GetNativeSecondPlayer(PlayState* play);
 Actor* ShipCrewCamera_GetSecondTarget(PlayState* play);
 s32 ShipCrewCamera_GetSecondParallel(PlayState* play);
+s32 ShipCrewCamera_GetSecondNativeMode(PlayState* play);
 void ShipCrewCamera_SetNativeSecondView(PlayState* play, const Vec3f* eye, const Vec3f* at, const Vec3f* up, f32 fov);
 static s32 sShipCrewUpdatingNativeSecondCamera = false;
 
@@ -7860,19 +7861,10 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
     // is not restarted on every frame.
     {
         Actor* target = ShipCrewCamera_GetSecondTarget(play);
-        if (target != NULL) {
-            if (p2Camera.target != target || p2Camera.mode != CAM_MODE_BATTLE) {
-                p2Camera.target = target;
-                Camera_RequestModeImpl(&p2Camera, CAM_MODE_BATTLE, true);
-            }
-        } else if (ShipCrewCamera_GetSecondParallel(play)) {
-            p2Camera.target = NULL;
-            if (p2Camera.mode != CAM_MODE_TARGET)
-                Camera_RequestModeImpl(&p2Camera, CAM_MODE_TARGET, true);
-        } else if (p2Camera.target != NULL || p2Camera.mode == CAM_MODE_BATTLE || p2Camera.mode == CAM_MODE_TARGET) {
-            p2Camera.target = NULL;
-            Camera_RequestModeImpl(&p2Camera, CAM_MODE_NORMAL, true);
-        }
+        const s32 nativeMode = ShipCrewCamera_GetSecondNativeMode(play);
+        p2Camera.target = target;
+        if (p2Camera.mode != nativeMode)
+            Camera_RequestModeImpl(&p2Camera, nativeMode, true);
     }
 
     // Reuse ordinary camera settings when P1 moves between 3D room types.
