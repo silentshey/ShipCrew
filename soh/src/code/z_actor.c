@@ -446,6 +446,8 @@ void Attention_Init(TargetContext* targetCtx, Actor* actor, PlayState* play) {
 s32 ShipCrewCamera_GetSplitOverlayProjection(PlayState* play, MtxF* out);
 Actor* ShipCrewCamera_GetSecondTarget(PlayState* play);
 static s32 sShipCrewReticleSlot = 0; // 0 full, 1 P1 left, 2 P2 right
+static TargetContext sShipCrewP2TargetCtx;
+static Player* sShipCrewP2TargetOwner = NULL;
 
 void Attention_Draw(TargetContext* targetCtx, PlayState* play) {
     Actor* actor = targetCtx->targetedActor;
@@ -573,13 +575,56 @@ void Attention_Draw(TargetContext* targetCtx, PlayState* play) {
     CLOSE_DISPS(play->state.gfxCtx);
 }
 
+TargetContext* ShipCrewAttention_GetSecondContext(PlayState* play, Player* player) {
+    if (play == NULL || player == NULL)
+        return NULL;
+    if (sShipCrewP2TargetOwner != player) {
+        memset(&sShipCrewP2TargetCtx, 0, sizeof(sShipCrewP2TargetCtx));
+        sShipCrewP2TargetOwner = player;
+    }
+    return &sShipCrewP2TargetCtx;
+}
+
+void ShipCrewAttention_UpdateSecondPlayer(PlayState* play, Player* player) {
+    TargetContext savedPrimary;
+    MtxF savedProjection;
+    MtxF secondProjection;
+    Actor* target;
+
+    if (ShipCrewAttention_GetSecondContext(play, player) == NULL)
+        return;
+
+    target = player->focusActor;
+    if (target != NULL && target->update == NULL) {
+        target = NULL;
+        Player_ReleaseLockOn(player);
+    }
+    if (target == NULL || player->zTargetActiveTimer < 5) {
+        target = NULL;
+        sShipCrewP2TargetCtx.unk_4B = 0;
+    }
+
+    savedPrimary = play->actorCtx.targetCtx;
+    savedProjection = play->viewProjectionMtxF;
+    play->actorCtx.targetCtx = sShipCrewP2TargetCtx;
+    if (ShipCrewCamera_GetSplitOverlayProjection(play, &secondProjection))
+        play->viewProjectionMtxF = secondProjection;
+
+    // Run the original attention candidate/reticle solver against P2 and its
+    // own camera projection. The original Player_UpdateZTargeting consumes
+    // this context later in the same P2 update.
+    Attention_Update(&play->actorCtx.targetCtx, player, target, play);
+    sShipCrewP2TargetCtx = play->actorCtx.targetCtx;
+
+    play->viewProjectionMtxF = savedProjection;
+    play->actorCtx.targetCtx = savedPrimary;
+}
+
 // Called from the normal overlay pass, AFTER P2's 3D world pass cached
-// its view projection. Do not replace P1's global attention target context.
+// its view projection. Both players now draw an original TargetContext.
 void ShipCrewAttention_DrawSplit(PlayState* play) {
-    static TargetContext p2TargetCtx;
     MtxF secondProjection;
     MtxF savedProjection;
-    Actor* p2Target;
 
     if (!ShipCrewCamera_GetSplitOverlayProjection(play, &secondProjection)) {
         sShipCrewReticleSlot = 0;
@@ -590,24 +635,11 @@ void ShipCrewAttention_DrawSplit(PlayState* play) {
     sShipCrewReticleSlot = 1;
     Attention_Draw(&play->actorCtx.targetCtx, play);
 
-    p2Target = ShipCrewCamera_GetSecondTarget(play);
-    if (p2Target != NULL) {
-        if (p2TargetCtx.targetedActor != p2Target) {
-            memset(&p2TargetCtx, 0, sizeof(p2TargetCtx));
-            Attention_InitReticle(&p2TargetCtx, p2Target->category, play);
-            p2TargetCtx.targetedActor = p2Target;
-            p2TargetCtx.unk_4B = 1;
-            p2TargetCtx.unk_44 = 120.0f;
-        }
-        savedProjection = play->viewProjectionMtxF;
-        play->viewProjectionMtxF = secondProjection;
-        sShipCrewReticleSlot = 2;
-        Attention_Draw(&p2TargetCtx, play);
-        play->viewProjectionMtxF = savedProjection;
-    } else {
-        // Prevent target pointer reuse on enemy death or split mode changes.
-        memset(&p2TargetCtx, 0, sizeof(p2TargetCtx));
-    }
+    savedProjection = play->viewProjectionMtxF;
+    play->viewProjectionMtxF = secondProjection;
+    sShipCrewReticleSlot = 2;
+    Attention_Draw(&sShipCrewP2TargetCtx, play);
+    play->viewProjectionMtxF = savedProjection;
     sShipCrewReticleSlot = 0;
 }
 
@@ -2217,8 +2249,52 @@ s32 ShipCrewActor_IsSecondPlayerWithinXZ(PlayState* play, Actor* actor, f32 dist
     return dx * dx + dz * dz < distance * distance;
 }
 
+static s32 ShipCrewActor_OfferCarryToPlayer(Actor* actor, Player* player) {
+    f32 dx;
+    f32 dz;
+    f32 dy;
+    s16 actorToPlayerYaw;
+    s32 absYawDiff;
+
+    if (actor == NULL || player == NULL ||
+        (player->stateFlags1 &
+         (PLAYER_STATE1_DEAD | PLAYER_STATE1_CHARGING_SPIN_ATTACK | PLAYER_STATE1_HANGING_OFF_LEDGE |
+          PLAYER_STATE1_CLIMBING_LEDGE | PLAYER_STATE1_JUMPING | PLAYER_STATE1_FREEFALL |
+          PLAYER_STATE1_FIRST_PERSON | PLAYER_STATE1_CLIMBING_LADDER)) ||
+        Player_GetExplosiveHeld(player) >= 0 ||
+        (player->stateFlags1 & (PLAYER_STATE1_CARRYING_ACTOR | PLAYER_STATE1_IN_CUTSCENE)))
+        return false;
+
+    dx = player->actor.world.pos.x - actor->world.pos.x;
+    dz = player->actor.world.pos.z - actor->world.pos.z;
+    dy = player->actor.world.pos.y - actor->world.pos.y;
+    if ((dx * dx + dz * dz) >= SQ(50.0f) || fabsf(dy) >= 10.0f)
+        return false;
+
+    // Match Actor_OfferGetItem's native facing score. yawTowardsPlayer is
+    // actor->player, so a Link facing the actor yields an absolute 0x8000.
+    actorToPlayerYaw = Math_Atan2S(dx, dz);
+    absYawDiff = ABS((s16)(actorToPlayerYaw - player->actor.shape.rot.y));
+    if (player->getItemDirection < absYawDiff) {
+        player->getItemId = GI_NONE;
+        player->interactRangeActor = actor;
+        player->getItemDirection = absYawDiff;
+        return true;
+    }
+    return false;
+}
+
 void Actor_OfferCarry(Actor* actor, PlayState* play) {
+    Player* p2;
+
+    // Preserve P1 exactly.
     Actor_OfferGetItemNearby(actor, play, GI_NONE);
+
+    // Give P2 the same native interaction input instead of attaching the
+    // actor by hand in TwoLinkPilot.
+    p2 = ShipCrewPilot_GetInteractionPlayer(play);
+    if (p2 != NULL)
+        ShipCrewActor_OfferCarryToPlayer(actor, p2);
 }
 
 u32 Actor_HasNoParent(Actor* actor, PlayState* play) {
