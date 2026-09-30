@@ -61,7 +61,7 @@ s32 ShipCrewPlayer_IsNativeLedgeAction(Player* player);
 s32 ShipCrewPlayer_UpdateNativeLedgeForPilot(PlayState* play, Player* player, Input* input);
 s32 ShipCrewPlayer_HandlePilotSceneExit(PlayState* play, Player* player);
 s32 ShipCrewPlayer_UpdateFullNativeFrameForPilot(PlayState* play, Player* player, Input* input, s16 cameraYaw,
-                                                  Actor* attentionCandidate, Actor* contextActor);
+                                                 Actor* attentionCandidate, Actor* contextActor);
 }
 
 // The experimental switch lives in the existing Controls settings screen.
@@ -1065,8 +1065,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         player->currentBoots = GET_PLAYER(play)->currentBoots;
         player->currentShield = GET_PLAYER(play)->currentShield;
 
-        ShipCrewPlayer_UpdateFullNativeFrameForPilot(play, player, &play->state.input[1], cameraYaw,
-                                                     attentionCandidate, contextActor);
+        ShipCrewPlayer_UpdateFullNativeFrameForPilot(play, player, &play->state.input[1], cameraYaw, attentionCandidate,
+                                                     contextActor);
         ShipCrewPlayer_HandlePilotSceneExit(play, player);
         Actor_SetFocus(actor, 40.0f);
         sPilot.lockedTarget = player->focusActor;
