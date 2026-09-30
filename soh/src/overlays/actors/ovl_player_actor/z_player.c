@@ -12830,8 +12830,11 @@ void Player_DrawGameplay(PlayState* play, Player* this, s32 lod, Gfx* cullDList,
     gSPSegment(POLY_OPA_DISP++, 0x0C, cullDList);
     gSPSegment(POLY_XLU_DISP++, 0x0C, cullDList);
 
+    // P2 is visually distinguished with the red/Goron tunic palette only.
+    // Gameplay still uses this->currentTunic, so heat/water rules remain shared with P1.
+    const s32 drawTunic = (this->actor.id == ACTOR_EN_OE2) ? PLAYER_TUNIC_GORON : this->currentTunic;
     Player_DrawImpl(play, this->skelAnime.skeleton, this->skelAnime.jointTable, this->skelAnime.dListCount, lod,
-                    this->currentTunic, this->currentBoots, this->actor.shape.face, overrideLimbDraw,
+                    drawTunic, this->currentBoots, this->actor.shape.face, overrideLimbDraw,
                     Player_PostLimbDrawGameplay, this);
 
     if ((overrideLimbDraw == Player_OverrideLimbDrawGameplayDefault) && (this->currentMask != PLAYER_MASK_NONE)) {
