@@ -546,6 +546,10 @@ static s32 sShipCrewPilotNativeLedge = false;
 static s32 sShipCrewPilotFullNativeFrame = false;
 static s16 sShipCrewPilotCameraYaw = 0;
 static Actor* sShipCrewPilotAttentionCandidate = NULL;
+
+static s16 ShipCrewPlayer_GetControlCameraYaw(PlayState* play) {
+    return sShipCrewPilotFullNativeFrame ? sShipCrewPilotCameraYaw : Camera_GetInputDirYaw(GET_ACTIVE_CAM(play));
+}
 static u32 sConveyorSpeed = 0;
 static s16 sIsFloorConveyor = false;
 static s16 sConveyorYaw = 0;
@@ -2081,7 +2085,7 @@ void Player_ProcessControlStick(PlayState* play, Player* this) {
     func_80077D10(&sControlStickMagnitude, &sControlStickAngle, sControlInput);
 
     sControlStickWorldYaw =
-        (sShipCrewPilotFullNativeFrame ? sShipCrewPilotCameraYaw : Camera_GetInputDirYaw(GET_ACTIVE_CAM(play))) +
+        (sShipCrewPilotFullNativeFrame ? sShipCrewPilotCameraYaw : ShipCrewPlayer_GetControlCameraYaw(play)) +
         sControlStickAngle;
 
     this->controlStickDataIndex = (this->controlStickDataIndex + 1) % 4;
@@ -4107,7 +4111,7 @@ s32 Player_GetMovementSpeedAndYaw(Player* this, f32* outSpeedTarget, s16* outYaw
 
         return false;
     } else {
-        *outYawTarget += Camera_GetInputDirYaw(GET_ACTIVE_CAM(play));
+        *outYawTarget += ShipCrewPlayer_GetControlCameraYaw(play);
         return true;
     }
 }
@@ -8504,7 +8508,7 @@ s32 func_80840058(Player* this, f32* arg1, s16* arg2, PlayState* play) {
     func_8083DC54(this, play);
 
     if ((*arg1 != 0.0f) || (ABS(this->unk_87C) > 400)) {
-        s16 temp1 = *arg2 - (u16)Camera_GetInputDirYaw(GET_ACTIVE_CAM(play));
+        s16 temp1 = *arg2 - (u16)ShipCrewPlayer_GetControlCameraYaw(play);
         u16 temp2 = (ABS(temp1) - 0x2000);
 
         if ((temp2 < 0x4000) || (this->unk_87C != 0)) {
@@ -9747,7 +9751,7 @@ void Player_Action_80843188(Player* this, PlayState* play) {
                (CVarGetInteger(CVAR_SETTING("Controls.InvertShieldAimingYAxis"), 1) ? 1 : -1);
         sp50 = sControlInput->rel.stick_x * (CVarGetInteger(CVAR_ENHANCEMENT("MirroredWorld"), 0) ? 120 : -120) *
                (CVarGetInteger(CVAR_SETTING("Controls.InvertShieldAimingXAxis"), 0) ? -1 : 1);
-        sp4E = this->actor.shape.rot.y - Camera_GetInputDirYaw(GET_ACTIVE_CAM(play));
+        sp4E = this->actor.shape.rot.y - ShipCrewPlayer_GetControlCameraYaw(play);
         GameInteractor_ExecuteOnPlayerShieldControl(&sp50, &sp54);
 
         sp40 = Math_CosS(sp4E);
@@ -15744,7 +15748,7 @@ s32 Player_UpdateNoclip(Player* this, PlayState* play) {
                 s16 angle;
                 s16 temp;
 
-                angle = temp = Camera_GetInputDirYaw(GET_ACTIVE_CAM(play));
+                angle = temp = ShipCrewPlayer_GetControlCameraYaw(play);
 
                 if (CHECK_BTN_ALL(sControlInput->cur.button, BTN_DDOWN)) {
                     angle = temp + 0x8000;
