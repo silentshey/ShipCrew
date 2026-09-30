@@ -16,6 +16,7 @@
 #define FLAGS ACTOR_FLAG_THROW_ONLY
 
 s32 ShipCrewActor_IsSecondPlayerWithinXZ(PlayState* play, Actor* actor, f32 distance);
+s32 ShipCrewActor_OfferGetItemToSecondPlayer(Actor* actor, PlayState* play, s32 getItemId, f32 xzRange, f32 yRange);
 
 void EnIshi_Init(Actor* thisx, PlayState* play);
 void EnIshi_Destroy(Actor* thisx, PlayState* play);
@@ -388,12 +389,15 @@ void EnIshi_Wait(EnIshi* this, PlayState* play) {
         CollisionCheck_SetAC(play, &play->colChkCtx, &this->collider.base);
         if ((this->actor.xzDistToPlayer < 400.0f) || ShipCrewActor_IsSecondPlayerWithinXZ(play, &this->actor, 400.0f)) {
             CollisionCheck_SetOC(play, &play->colChkCtx, &this->collider.base);
-            if (this->actor.xzDistToPlayer < 90.0f) {
-                // GI_NONE in these cases allows the player to lift the actor
+            if ((this->actor.xzDistToPlayer < 90.0f) ||
+                ShipCrewActor_IsSecondPlayerWithinXZ(play, &this->actor, 90.0f)) {
+                // Preserve P1's offer and provide the same range to P2.
                 if (type == ROCK_LARGE) {
                     Actor_OfferGetItem(&this->actor, play, GI_NONE, 80.0f, 20.0f);
+                    ShipCrewActor_OfferGetItemToSecondPlayer(&this->actor, play, GI_NONE, 80.0f, 20.0f);
                 } else {
                     Actor_OfferGetItem(&this->actor, play, GI_NONE, 50.0f, 10.0f);
+                    ShipCrewActor_OfferGetItemToSecondPlayer(&this->actor, play, GI_NONE, 50.0f, 10.0f);
                 }
             }
         }
