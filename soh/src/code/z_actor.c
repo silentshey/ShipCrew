@@ -2258,10 +2258,9 @@ s32 ShipCrewActor_OfferGetItemToSecondPlayer(Actor* actor, PlayState* play, s32 
     s32 absYawDiff;
 
     if (actor == NULL || play == NULL || player == NULL ||
-        (player->stateFlags1 &
-         (PLAYER_STATE1_DEAD | PLAYER_STATE1_CHARGING_SPIN_ATTACK | PLAYER_STATE1_HANGING_OFF_LEDGE |
-          PLAYER_STATE1_CLIMBING_LEDGE | PLAYER_STATE1_JUMPING | PLAYER_STATE1_FREEFALL |
-          PLAYER_STATE1_FIRST_PERSON | PLAYER_STATE1_CLIMBING_LADDER)) ||
+        (player->stateFlags1 & (PLAYER_STATE1_DEAD | PLAYER_STATE1_CHARGING_SPIN_ATTACK |
+                                PLAYER_STATE1_HANGING_OFF_LEDGE | PLAYER_STATE1_CLIMBING_LEDGE | PLAYER_STATE1_JUMPING |
+                                PLAYER_STATE1_FREEFALL | PLAYER_STATE1_FIRST_PERSON | PLAYER_STATE1_CLIMBING_LADDER)) ||
         Player_GetExplosiveHeld(player) >= 0 ||
         (player->stateFlags1 & (PLAYER_STATE1_CARRYING_ACTOR | PLAYER_STATE1_IN_CUTSCENE)))
         return false;
