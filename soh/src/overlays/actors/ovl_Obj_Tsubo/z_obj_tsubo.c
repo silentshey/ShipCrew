@@ -241,6 +241,7 @@ void ObjTsubo_SetupIdle(ObjTsubo* this) {
 }
 
 s32 ShipCrewActor_IsSecondPlayerWithinXZ(PlayState* play, Actor* actor, f32 distance);
+s32 ShipCrewActor_OfferGetItemToSecondPlayer(Actor* actor, PlayState* play, s32 getItemId, f32 xzRange, f32 yRange);
 
 void ObjTsubo_Idle(ObjTsubo* this, PlayState* play) {
     s32 pad;
@@ -277,6 +278,9 @@ void ObjTsubo_Idle(ObjTsubo* this, PlayState* play) {
                 // GI_NONE in this case allows the player to lift the actor
                 Actor_OfferGetItem(&this->actor, play, GI_NONE, 30.0f, 30.0f);
             }
+        }
+        if (ShipCrewActor_IsSecondPlayerWithinXZ(play, &this->actor, 100.0f)) {
+            ShipCrewActor_OfferGetItemToSecondPlayer(&this->actor, play, GI_NONE, 30.0f, 30.0f);
         }
     }
 }

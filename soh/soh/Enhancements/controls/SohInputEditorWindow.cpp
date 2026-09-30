@@ -1634,12 +1634,10 @@ void SohInputEditorWindow::DrawLinkTab() {
         CVarCheckbox("ShipCrew: Two-Link Controller Pilot (Experimental)", CVAR_SETTING("ShipCrew.TwoLinkPilot"),
                      CheckboxOptions()
                          .Color(THEME_COLOR)
-                         .Tooltip("P2 input uses controller port 2 (Link (P2) tab). Left stick: walk/run.\\n"
-                                  "A while moving: roll; no manual jump. Sword combat is not ready.\\n"
-                                  "C-Left: take out one bomb, then press A to place/throw it.\\n"
-                                  "C-Right: use one Deku Nut per separate press.\\n"
-                                  "Both share save ammo; buttons must be released before reuse.\\n"
-                                  "New roll/item animations and gravity are experimental. Use a test save."));
+                         .Tooltip("P2 input uses controller port 2 (Link (P2) tab). Gameplay movement runs "
+                                  "the same original Player_UpdateCommon/action framework as P1.\\n"
+                                  "Inventory/save ownership is still shared and combat/item parity remains unfinished. "
+                                  "Use a test save."));
 
         CVarCheckbox("ShipCrew: Native P2 Camera + Vertical Split-Screen (Experimental)",
                      CVAR_SETTING("ShipCrew.SplitScreenPilot"),
@@ -1650,35 +1648,13 @@ void SohInputEditorWindow::DrawLinkTab() {
                                   "P1 on the left; P2 on the right.\\n"
                                   "P2's free orbit/right-stick camera control has been removed. "
                                   "P2 moves relative to its automatic camera.\\n"
-                                  "Z-targeting and scripted camera parity still need work. "
+                                  "Z-targeting now uses P2's native Link state and independent Attention context. "
                                   "Pause, cutscene and prerender rooms remain single view; "
                                   "HUD is shared. Disable to use the tested single view."));
 
-        CVarCheckbox("ShipCrew: Native-Style P2 Movement + Animation Groups (Experimental)",
-                     CVAR_SETTING("ShipCrew.P2NativeLocomotion"),
-                     CheckboxOptions()
-                         .Color(THEME_COLOR)
-                         .Tooltip("Optional foundation for Player 2 movement parity. Reuses original "
-                                  "Link's analog speed curve, turn braking, acceleration, rolling speed, "
-                                  "age-specific collision checks and equipment-aware animation groups.\\n"
-                                  "Adds independent targeting strafe/backpedal animations. "
-                                  "Automatic jumps/ledge moves can be enabled separately below. "
-                                  "Swimming, sword combat and scripted actions still need "
-                                  "per-player action-state isolation.\\n"
-                                  "Disable to retain the previous tested P2 movement. Use a test save."));
-
-        CVarCheckbox("ShipCrew: P2 Automatic Jump + Ledge Traversal (Experimental)",
-                     CVAR_SETTING("ShipCrew.P2NativeTraversal"),
-                     CheckboxOptions()
-                         .Color(THEME_COLOR)
-                         .Tooltip("Requires Native-Style P2 Movement above. Adds run-off auto-jumps, "
-                                  "age-aware ledge probes, low/medium ledge steps, high-ledge jump "
-                                  "startups and an independent hanging/climb animation state.\\n"
-                                  "While hanging, press UP to climb or DOWN to drop. A also climbs. "
-                                  "No manual jump button. Also enables experimental entry from both "
-                                  "ends of flagged ladders, independent UP/DOWN climbing and dismounts. "
-                                  "Swimming and scripted actions remain unsupported. Use a test save.\\n"
-                                  "Disable to keep PR #16 movement behavior."));
+        ImGui::TextWrapped("Player 2 movement now runs Ocarina of Time's original Link update/action framework. "
+                           "Walking, rolling, Z movement, automatic jumps, crawlspaces, ladders, ledges and "
+                           "carried-object movement are no longer optional pilot implementations.");
 
         DrawPortMappings(portIndex);
 
@@ -1728,7 +1704,7 @@ void SohInputEditorWindow::DrawIvanTab() {
                            "With Native P2 Camera + Split enabled in the P1 tab, P2 uses "
                            "the original automatic camera solver including wall handling. "
                            "Free orbit/right-stick rotation is disabled for now. "
-                           "Targeting, cutscenes, HUD and global options need more work.");
+                           "Cutscenes, HUD and some global options still need per-player work.");
         DrawPortMappings(portIndex);
         ImGui::EndTabItem();
     }

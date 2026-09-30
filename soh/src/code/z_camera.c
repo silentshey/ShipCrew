@@ -45,8 +45,12 @@ s32 Camera_UpdateWater(Camera* camera);
 Player* ShipCrewCamera_GetNativeSecondPlayer(PlayState* play);
 Actor* ShipCrewCamera_GetSecondTarget(PlayState* play);
 s32 ShipCrewCamera_GetSecondParallel(PlayState* play);
+s16 ShipCrewPlayer_GetNativeCameraMode(Player* player);
 void ShipCrewCamera_SetNativeSecondView(PlayState* play, const Vec3f* eye, const Vec3f* at, const Vec3f* up, f32 fov);
 static s32 sShipCrewUpdatingNativeSecondCamera = false;
+static Camera sShipCrewP2Camera;
+static PlayState* sShipCrewP2CameraPlay = NULL;
+static Player* sShipCrewP2CameraPlayer = NULL;
 
 /*===============================================================*/
 
@@ -7798,10 +7802,13 @@ Vec3s Camera_Update(Camera* camera) {
  * architecture was written for one player. Player 2 doesn't own the HUD,
  * environment updates, FreeLook mouse/right-stick or cutscene cameras yet.
  */
+s16 ShipCrewCamera_GetSecondInputDirYaw(PlayState* play) {
+    if (play != NULL && sShipCrewP2CameraPlay == play && sShipCrewP2CameraPlayer != NULL)
+        return Camera_GetInputDirYaw(&sShipCrewP2Camera);
+    return (play != NULL && GET_ACTIVE_CAM(play) != NULL) ? Camera_GetInputDirYaw(GET_ACTIVE_CAM(play)) : 0;
+}
+
 void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
-    static Camera p2Camera;
-    static PlayState* p2Play = NULL;
-    static Player* p2Player = NULL;
     Player* player;
     View originalView;
     s32 originalOOBTimer;
@@ -7811,14 +7818,14 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
     s32 i;
 
     if (play == NULL || gDbgCamEnabled) {
-        p2Play = NULL;
-        p2Player = NULL;
+        sShipCrewP2CameraPlay = NULL;
+        sShipCrewP2CameraPlayer = NULL;
         return;
     }
     player = ShipCrewCamera_GetNativeSecondPlayer(play);
     if (player == NULL || play->cameraPtrs[CAM_ID_MAIN] == NULL || play->mainCamera.status != CAM_STAT_ACTIVE) {
-        p2Play = NULL;
-        p2Player = NULL;
+        sShipCrewP2CameraPlay = NULL;
+        sShipCrewP2CameraPlayer = NULL;
         return;
     }
 
@@ -7831,54 +7838,48 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
     }
     sShipCrewUpdatingNativeSecondCamera = true;
 
-    if (p2Play != play || p2Player != player) {
+    if (sShipCrewP2CameraPlay != play || sShipCrewP2CameraPlayer != player) {
         // Copy P1's already-constructed camera configuration/age-dependent
         // defaults, then initialize the independent P2 camera against its
         // own character. The normal game room-setting routine is deliberately
         // allowed for this one secondary camera, not for cutscene subcameras.
-        p2Camera = play->mainCamera;
-        p2Camera.play = play;
-        p2Camera.player = player;
-        p2Camera.target = NULL;
-        p2Camera.thisIdx = CAM_ID_MAIN;
-        p2Camera.status = CAM_STAT_ACTIVE;
-        p2Camera.mode = CAM_MODE_NORMAL;
-        p2Camera.timer = -1;
-        p2Camera.childCamIdx = SUBCAM_FREE;
-        p2Camera.parentCamIdx = SUBCAM_FREE;
-        p2Camera.animState = 0;
-        Camera_InitPlayerSettings(&p2Camera, player);
-        p2Camera.status = CAM_STAT_ACTIVE;
-        p2Camera.thisIdx = CAM_ID_MAIN;
+        sShipCrewP2Camera = play->mainCamera;
+        sShipCrewP2Camera.play = play;
+        sShipCrewP2Camera.player = player;
+        sShipCrewP2Camera.target = NULL;
+        sShipCrewP2Camera.thisIdx = CAM_ID_MAIN;
+        sShipCrewP2Camera.status = CAM_STAT_ACTIVE;
+        sShipCrewP2Camera.mode = CAM_MODE_NORMAL;
+        sShipCrewP2Camera.timer = -1;
+        sShipCrewP2Camera.childCamIdx = SUBCAM_FREE;
+        sShipCrewP2Camera.parentCamIdx = SUBCAM_FREE;
+        sShipCrewP2Camera.animState = 0;
+        Camera_InitPlayerSettings(&sShipCrewP2Camera, player);
+        sShipCrewP2Camera.status = CAM_STAT_ACTIVE;
+        sShipCrewP2Camera.thisIdx = CAM_ID_MAIN;
         sOOBTimer = 0;
-        p2Play = play;
-        p2Player = player;
+        sShipCrewP2CameraPlay = play;
+        sShipCrewP2CameraPlayer = player;
     }
 
-    // Use the original per-camera target/battle solver, never P1's global lock.
-    // Only request mode on transitions so the solver's camera animation state
-    // is not restarted on every frame.
+    // Drive the second camera from P2's ORIGINAL Player state. This mirrors
+    // Player_UpdateCamAndSeqModes without writing to P1's CAM_ID_MAIN.
     {
         Actor* target = ShipCrewCamera_GetSecondTarget(play);
-        if (target != NULL) {
-            if (p2Camera.target != target || p2Camera.mode != CAM_MODE_BATTLE) {
-                p2Camera.target = target;
-                Camera_RequestModeImpl(&p2Camera, CAM_MODE_BATTLE, true);
-            }
-        } else if (ShipCrewCamera_GetSecondParallel(play)) {
-            p2Camera.target = NULL;
-            if (p2Camera.mode != CAM_MODE_TARGET)
-                Camera_RequestModeImpl(&p2Camera, CAM_MODE_TARGET, true);
-        } else if (p2Camera.target != NULL || p2Camera.mode == CAM_MODE_BATTLE || p2Camera.mode == CAM_MODE_TARGET) {
-            p2Camera.target = NULL;
-            Camera_RequestModeImpl(&p2Camera, CAM_MODE_NORMAL, true);
-        }
+        s16 desiredMode = ShipCrewPlayer_GetNativeCameraMode(player);
+        sShipCrewP2Camera.target = target;
+        if (target != NULL)
+            Camera_SetParam(&sShipCrewP2Camera, 8, target);
+        // P1 makes this request every frame from Player_UpdateCamAndSeqModes.
+        // Do the same here so TARGET/BATTLE/NORMAL recenter timing and mode
+        // internal flags remain as responsive as the primary camera.
+        Camera_RequestMode(&sShipCrewP2Camera, desiredMode);
     }
 
     // Reuse ordinary camera settings when P1 moves between 3D room types.
     // Cutscene/scripted settings still belong to P1; the secondary camera
     // stays in the independently initialized normal/dungeon room setting.
-    Camera_Update(&p2Camera);
+    Camera_Update(&sShipCrewP2Camera);
 
     // Camera_Update writes the rendered eye/at/up/fov into play->view.
     // Capture that output BEFORE restoring P1's global renderer state.

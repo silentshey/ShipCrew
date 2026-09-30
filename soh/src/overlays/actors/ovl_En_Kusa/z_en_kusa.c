@@ -349,7 +349,7 @@ void EnKusa_Main(EnKusa* this, PlayState* play) {
 
             if ((this->actor.xzDistToPlayer < 400.0f) || shipCrewP2Near400) {
                 CollisionCheck_SetOC(play, &play->colChkCtx, &this->collider.base);
-                if (this->actor.xzDistToPlayer < 100.0f) {
+                if ((this->actor.xzDistToPlayer < 100.0f) || shipCrewP2Near100) {
                     Actor_OfferCarry(&this->actor, play);
                 }
             }
