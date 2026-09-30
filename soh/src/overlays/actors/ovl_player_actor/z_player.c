@@ -541,6 +541,15 @@ static u32 sTouchedWallFlags = 0;
 static s32 sShipCrewPilotNativeClimb = false;
 static s32 sShipCrewPilotNativeCrawl = false;
 static s32 sShipCrewPilotNativeLedge = false;
+// Full native P2 frame: reuse Player_UpdateCommon/action funcs while keeping
+// the engine's singleton HUD/camera ownership on P1.
+static s32 sShipCrewPilotFullNativeFrame = false;
+static s16 sShipCrewPilotCameraYaw = 0;
+static Actor* sShipCrewPilotAttentionCandidate = NULL;
+
+static s16 ShipCrewPlayer_GetControlCameraYaw(PlayState* play) {
+    return sShipCrewPilotFullNativeFrame ? sShipCrewPilotCameraYaw : Camera_GetInputDirYaw(GET_ACTIVE_CAM(play));
+}
 static u32 sConveyorSpeed = 0;
 static s16 sIsFloorConveyor = false;
 static s16 sConveyorYaw = 0;
@@ -2075,7 +2084,9 @@ void Player_ProcessControlStick(PlayState* play, Player* this) {
 
     func_80077D10(&sControlStickMagnitude, &sControlStickAngle, sControlInput);
 
-    sControlStickWorldYaw = Camera_GetInputDirYaw(GET_ACTIVE_CAM(play)) + sControlStickAngle;
+    sControlStickWorldYaw =
+        (sShipCrewPilotFullNativeFrame ? sShipCrewPilotCameraYaw : ShipCrewPlayer_GetControlCameraYaw(play)) +
+        sControlStickAngle;
 
     this->controlStickDataIndex = (this->controlStickDataIndex + 1) % 4;
 
@@ -3837,7 +3848,8 @@ void Player_UpdateZTargeting(Player* this, PlayState* play) {
         ignoreLeash = true;
     }
 
-    isTalking = Player_IsTalking(play);
+    isTalking =
+        sShipCrewPilotFullNativeFrame ? CHECK_FLAG_ALL(this->actor.flags, ACTOR_FLAG_TALK) : Player_IsTalking(play);
 
     if (isTalking || (this->zTargetActiveTimer != 0) ||
         (this->stateFlags1 & (PLAYER_STATE1_CHARGING_SPIN_ATTACK | PLAYER_STATE1_BOOMERANG_THROWN))) {
@@ -3847,7 +3859,11 @@ void Player_UpdateZTargeting(Player* this, PlayState* play) {
                 GameInteractor_Should(VB_TOGGLE_Z_TARGET_SWITCH_DIRECTION,
                                       CHECK_BTN_ALL(sControlInput->press.button, BTN_Z))) {
 
-                if (this->actor.category == ACTORCAT_PLAYER) {
+                if (sShipCrewPilotFullNativeFrame) {
+                    // P2 owns an independent attention candidate but uses the
+                    // SAME Player lock-on timer/state transitions as P1.
+                    nextLockOnActor = sShipCrewPilotAttentionCandidate;
+                } else if (this->actor.category == ACTORCAT_PLAYER) {
                     // The next lock-on actor defaults to the actor Navi is hovering over.
                     // This may change to the arrow hover actor below.
                     nextLockOnActor = play->actorCtx.targetCtx.arrowPointedActor;
@@ -3856,9 +3872,10 @@ void Player_UpdateZTargeting(Player* this, PlayState* play) {
                     nextLockOnActor = &GET_PLAYER(play)->actor;
                 }
 
-                // Get saved Z Target setting.
-                // Dark Link uses Hold Targeting.
-                usingHoldTargeting = (gSaveContext.zTargetSetting != 0) || (this->actor.category != ACTORCAT_PLAYER);
+                // P2 is locally controlled even though its actor remains in
+                // ACTORCAT_NPC to avoid singleton P1 HUD/cutscene ownership.
+                usingHoldTargeting = (gSaveContext.zTargetSetting != 0) ||
+                                     (!sShipCrewPilotFullNativeFrame && (this->actor.category != ACTORCAT_PLAYER));
 
                 this->stateFlags1 |= PLAYER_STATE1_Z_TARGETING;
 
@@ -3867,8 +3884,9 @@ void Player_UpdateZTargeting(Player* this, PlayState* play) {
                     // Navi hovers over the current lock-on actor, so `nextLockOnActor` and `focusActor`
                     // will be the same if already locked on.
                     // In this case, `nextLockOnActor` will be the arrow hover actor instead.
-                    if ((nextLockOnActor == this->focusActor) && (this->actor.category == ACTORCAT_PLAYER)) {
-                        nextLockOnActor = play->actorCtx.targetCtx.unk_94;
+                    if ((nextLockOnActor == this->focusActor) &&
+                        (sShipCrewPilotFullNativeFrame || (this->actor.category == ACTORCAT_PLAYER))) {
+                        nextLockOnActor = sShipCrewPilotFullNativeFrame ? NULL : play->actorCtx.targetCtx.unk_94;
                     }
 
                     if (GameInteractor_Should(VB_TOGGLE_Z_TARGET_SWITCH_TARGETS, nextLockOnActor != this->focusActor)) {
@@ -3897,7 +3915,8 @@ void Player_UpdateZTargeting(Player* this, PlayState* play) {
             }
 
             if (this->focusActor != NULL) {
-                if ((this->actor.category == ACTORCAT_PLAYER) && (this->focusActor != this->autoLockOnActor) &&
+                if ((sShipCrewPilotFullNativeFrame || (this->actor.category == ACTORCAT_PLAYER)) &&
+                    (this->focusActor != this->autoLockOnActor) &&
                     Attention_ShouldReleaseLockOn(this->focusActor, this, ignoreLeash)) {
                     Player_ReleaseLockOn(this);
                     this->stateFlags1 |= PLAYER_STATE1_LOCK_ON_FORCED_TO_RELEASE;
@@ -4092,7 +4111,7 @@ s32 Player_GetMovementSpeedAndYaw(Player* this, f32* outSpeedTarget, s16* outYaw
 
         return false;
     } else {
-        *outYawTarget += Camera_GetInputDirYaw(GET_ACTIVE_CAM(play));
+        *outYawTarget += ShipCrewPlayer_GetControlCameraYaw(play);
         return true;
     }
 }
@@ -8489,7 +8508,7 @@ s32 func_80840058(Player* this, f32* arg1, s16* arg2, PlayState* play) {
     func_8083DC54(this, play);
 
     if ((*arg1 != 0.0f) || (ABS(this->unk_87C) > 400)) {
-        s16 temp1 = *arg2 - (u16)Camera_GetInputDirYaw(GET_ACTIVE_CAM(play));
+        s16 temp1 = *arg2 - (u16)ShipCrewPlayer_GetControlCameraYaw(play);
         u16 temp2 = (ABS(temp1) - 0x2000);
 
         if ((temp2 < 0x4000) || (this->unk_87C != 0)) {
@@ -9732,7 +9751,7 @@ void Player_Action_80843188(Player* this, PlayState* play) {
                (CVarGetInteger(CVAR_SETTING("Controls.InvertShieldAimingYAxis"), 1) ? 1 : -1);
         sp50 = sControlInput->rel.stick_x * (CVarGetInteger(CVAR_ENHANCEMENT("MirroredWorld"), 0) ? 120 : -120) *
                (CVarGetInteger(CVAR_SETTING("Controls.InvertShieldAimingXAxis"), 0) ? -1 : 1);
-        sp4E = this->actor.shape.rot.y - Camera_GetInputDirYaw(GET_ACTIVE_CAM(play));
+        sp4E = this->actor.shape.rot.y - ShipCrewPlayer_GetControlCameraYaw(play);
         GameInteractor_ExecuteOnPlayerShieldControl(&sp50, &sp54);
 
         sp40 = Math_CosS(sp4E);
@@ -12815,8 +12834,11 @@ void Player_DrawGameplay(PlayState* play, Player* this, s32 lod, Gfx* cullDList,
     gSPSegment(POLY_OPA_DISP++, 0x0C, cullDList);
     gSPSegment(POLY_XLU_DISP++, 0x0C, cullDList);
 
+    // P2 is visually distinguished with the red/Goron tunic palette only.
+    // Gameplay still uses this->currentTunic, so heat/water rules remain shared with P1.
+    const s32 drawTunic = (this->actor.id == ACTOR_EN_OE2) ? PLAYER_TUNIC_GORON : this->currentTunic;
     Player_DrawImpl(play, this->skelAnime.skeleton, this->skelAnime.jointTable, this->skelAnime.dListCount, lod,
-                    this->currentTunic, this->currentBoots, this->actor.shape.face, overrideLimbDraw,
+                    drawTunic, this->currentBoots, this->actor.shape.face, overrideLimbDraw,
                     Player_PostLimbDrawGameplay, this);
 
     if ((overrideLimbDraw == Player_OverrideLimbDrawGameplayDefault) && (this->currentMask != PLAYER_MASK_NONE)) {
@@ -13847,6 +13869,103 @@ s32 ShipCrewPlayer_UpdateNativeClimbForPilot(PlayState* play, Player* player, In
     // P1 queues root movement after its actionFunc, not before.
     ShipCrewPlayer_QueueNativeAnimMovement(play, player);
     AnimationContext_SetNextQueue(play);
+    return true;
+}
+
+typedef struct {
+    Input* controlInput;
+    s32 savedCurrentMask;
+    f32 controlStickMagnitude;
+    s16 controlStickAngle;
+    s16 controlStickWorldYaw;
+    s32 upperBodyIsBusy;
+    s32 floorType;
+    f32 waterSpeedFactor;
+    f32 invWaterSpeedFactor;
+    u32 touchedWallFlags;
+    u32 conveyorSpeed;
+    s16 isFloorConveyor;
+    s16 conveyorYaw;
+    f32 yDistToFloor;
+    s32 prevFloorProperty;
+    s32 shapeYawToTouchedWall;
+    s32 worldYawToTouchedWall;
+    s16 floorShapePitch;
+    s32 useHeldItem;
+    s32 heldItemButtonIsHeldDown;
+} ShipCrewPlayerNativeFrameGlobals;
+
+static void ShipCrewPlayer_SaveNativeFrameGlobals(ShipCrewPlayerNativeFrameGlobals* state) {
+    state->controlInput = sControlInput;
+    state->savedCurrentMask = sSavedCurrentMask;
+    state->controlStickMagnitude = sControlStickMagnitude;
+    state->controlStickAngle = sControlStickAngle;
+    state->controlStickWorldYaw = sControlStickWorldYaw;
+    state->upperBodyIsBusy = sUpperBodyIsBusy;
+    state->floorType = sFloorType;
+    state->waterSpeedFactor = sWaterSpeedFactor;
+    state->invWaterSpeedFactor = sInvWaterSpeedFactor;
+    state->touchedWallFlags = sTouchedWallFlags;
+    state->conveyorSpeed = sConveyorSpeed;
+    state->isFloorConveyor = sIsFloorConveyor;
+    state->conveyorYaw = sConveyorYaw;
+    state->yDistToFloor = sYDistToFloor;
+    state->prevFloorProperty = sPrevFloorProperty;
+    state->shapeYawToTouchedWall = sShapeYawToTouchedWall;
+    state->worldYawToTouchedWall = sWorldYawToTouchedWall;
+    state->floorShapePitch = sFloorShapePitch;
+    state->useHeldItem = sUseHeldItem;
+    state->heldItemButtonIsHeldDown = sHeldItemButtonIsHeldDown;
+}
+
+static void ShipCrewPlayer_RestoreNativeFrameGlobals(const ShipCrewPlayerNativeFrameGlobals* state) {
+    sControlInput = state->controlInput;
+    sSavedCurrentMask = state->savedCurrentMask;
+    sControlStickMagnitude = state->controlStickMagnitude;
+    sControlStickAngle = state->controlStickAngle;
+    sControlStickWorldYaw = state->controlStickWorldYaw;
+    sUpperBodyIsBusy = state->upperBodyIsBusy;
+    sFloorType = state->floorType;
+    sWaterSpeedFactor = state->waterSpeedFactor;
+    sInvWaterSpeedFactor = state->invWaterSpeedFactor;
+    sTouchedWallFlags = state->touchedWallFlags;
+    sConveyorSpeed = state->conveyorSpeed;
+    sIsFloorConveyor = state->isFloorConveyor;
+    sConveyorYaw = state->conveyorYaw;
+    sYDistToFloor = state->yDistToFloor;
+    sPrevFloorProperty = state->prevFloorProperty;
+    sShapeYawToTouchedWall = state->shapeYawToTouchedWall;
+    sWorldYawToTouchedWall = state->worldYawToTouchedWall;
+    sFloorShapePitch = state->floorShapePitch;
+    sUseHeldItem = state->useHeldItem;
+    sHeldItemButtonIsHeldDown = state->heldItemButtonIsHeldDown;
+}
+
+// Run P2 through Player 1's complete movement/action framework. P2 keeps its
+// NPC actor category so singleton interface/cutscene/audio ownership remains
+// with P1; the scoped flags above only localize input yaw and Z-target logic.
+s32 ShipCrewPlayer_UpdateFullNativeFrameForPilot(PlayState* play, Player* player, Input* input, s16 cameraYaw,
+                                                 Actor* attentionCandidate, Actor* contextActor) {
+    if (play == NULL || player == NULL || input == NULL || player->ageProperties == NULL)
+        return false;
+
+    ShipCrewPlayerNativeFrameGlobals saved;
+    ShipCrewPlayer_SaveNativeFrameGlobals(&saved);
+
+    if (!(player->stateFlags1 & PLAYER_STATE1_CARRYING_ACTOR) && player->heldActor == NULL)
+        player->interactRangeActor = contextActor;
+
+    AnimationContext_SetNextQueue(play);
+    sShipCrewPilotFullNativeFrame = true;
+    sShipCrewPilotCameraYaw = cameraYaw;
+    sShipCrewPilotAttentionCandidate = attentionCandidate;
+
+    Player_UpdateCommon(player, play, input);
+
+    sShipCrewPilotAttentionCandidate = NULL;
+    sShipCrewPilotFullNativeFrame = false;
+    AnimationContext_SetNextQueue(play);
+    ShipCrewPlayer_RestoreNativeFrameGlobals(&saved);
     return true;
 }
 
@@ -15629,7 +15748,7 @@ s32 Player_UpdateNoclip(Player* this, PlayState* play) {
                 s16 angle;
                 s16 temp;
 
-                angle = temp = Camera_GetInputDirYaw(GET_ACTIVE_CAM(play));
+                angle = temp = ShipCrewPlayer_GetControlCameraYaw(play);
 
                 if (CHECK_BTN_ALL(sControlInput->cur.button, BTN_DDOWN)) {
                     angle = temp + 0x8000;

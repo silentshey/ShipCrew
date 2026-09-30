@@ -421,6 +421,11 @@ void EnIshi_LiftedUp(EnIshi* this, PlayState* play) {
 }
 
 void EnIshi_SetupFly(EnIshi* this) {
+    const s16 type = this->actor.params & 1;
+    // A carried rock must resume its stock ballistic gravity immediately on
+    // release, regardless of which local Player owned the parent link.
+    this->actor.gravity = (type == ROCK_SMALL) ? -1.2f : -2.5f;
+    this->actor.minVelocityY = -20.0f;
     this->actor.velocity.x = Math_SinS(this->actor.world.rot.y) * this->actor.speedXZ;
     this->actor.velocity.z = Math_CosS(this->actor.world.rot.y) * this->actor.speedXZ;
     if ((this->actor.params & 1) == ROCK_SMALL) {

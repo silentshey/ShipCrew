@@ -60,6 +60,8 @@ s32 ShipCrewPlayer_TryNativeLedgeForPilot(PlayState* play, Player* player, Input
 s32 ShipCrewPlayer_IsNativeLedgeAction(Player* player);
 s32 ShipCrewPlayer_UpdateNativeLedgeForPilot(PlayState* play, Player* player, Input* input);
 s32 ShipCrewPlayer_HandlePilotSceneExit(PlayState* play, Player* player);
+s32 ShipCrewPlayer_UpdateFullNativeFrameForPilot(PlayState* play, Player* player, Input* input, s16 cameraYaw,
+                                                 Actor* attentionCandidate, Actor* contextActor);
 }
 
 // The experimental switch lives in the existing Controls settings screen.
@@ -165,6 +167,7 @@ struct PilotRuntime {
     Vec3f cameraEye = {};
     Vec3f cameraUp = { 0.0f, 1.0f, 0.0f };
     f32 cameraFov = 60.0f;
+    s16 cameraInputYaw = 0;
     PilotItemPose itemPose = PilotItemPose::None;
 };
 PilotRuntime sPilot;
@@ -1035,6 +1038,43 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     if (sPilot.itemDebounceFrames > 0) {
         --sPilot.itemDebounceFrames;
     }
+
+    // Native locomotion now means exactly that: run Player 2 through P1's
+    // Player_UpdateCommon/actionFunc framework and bypass every hand-written
+    // pilot movement/roll/crawl/ledge/carry animation below.
+    if (CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0) {
+        // Use Camera_GetInputDirYaw's exact output from P2's native Camera.
+        // eye->at is not equivalent in indoor/fixed/target camera modes and
+        // was rotating movement incorrectly at specific camera angles.
+        const s16 cameraYaw = sPilot.cameraReady ? sPilot.cameraInputYaw : actor->shape.rot.y;
+
+        Actor* attentionCandidate = nullptr;
+        if (pressed & BTN_Z)
+            attentionCandidate = Pilot_FindTarget(play, actor, player->focusActor);
+
+        Actor* contextActor = nullptr;
+        if (!(player->stateFlags1 & PLAYER_STATE1_CARRYING_ACTOR) && player->heldActor == nullptr)
+            contextActor = Pilot_FindContextProp(play, player);
+
+        // Mirror shared equipment before native actions choose their model
+        // groups. The Player object, animation state, roll/crawl/carry state
+        // and all movement transitions remain P2-owned.
+        player->currentTunic = GET_PLAYER(play)->currentTunic;
+        player->currentBoots = GET_PLAYER(play)->currentBoots;
+        player->currentShield = GET_PLAYER(play)->currentShield;
+
+        ShipCrewPlayer_UpdateFullNativeFrameForPilot(play, player, &play->state.input[1], cameraYaw, attentionCandidate,
+                                                     contextActor);
+        ShipCrewPlayer_HandlePilotSceneExit(play, player);
+        Actor_SetFocus(actor, 40.0f);
+        sPilot.lockedTarget = player->focusActor;
+        sPilot.parallelTargeting = (player->stateFlags1 & PLAYER_STATE1_PARALLEL) != 0;
+        sPilot.parallelFacing = player->parallelYaw;
+        sPilot.crawl = PilotCrawl::None;
+        sPilot.pickupCandidate = nullptr;
+        sPilot.carriedProp = player->heldActor;
+        return;
+    }
     const f32 x = static_cast<f32>(pad.stick_x) / kMaxStickValue;
     const f32 z = static_cast<f32>(pad.stick_y) / kMaxStickValue;
     const f32 inputLength = std::sqrt(x * x + z * z);
@@ -1785,17 +1825,37 @@ static RegisterShipInitFunc sRegisterPilot(Pilot_RegisterHooks);
 
 // P2's independently allocated native camera is updated once AFTER the
 // engine's P1 camera, never during actor update or scene rendering.
+extern "C" Player* ShipCrewPilot_GetInteractionPlayer(PlayState* play);
+
 extern "C" s32 ShipCrewCamera_GetSecondParallel(PlayState* play) {
-    if (play == nullptr || sPilot.actor == nullptr || FindPilotActor(play) != sPilot.actor)
-        return false;
-    return sPilot.parallelTargeting;
+    Player* p2 = ShipCrewPilot_GetInteractionPlayer(play);
+    return p2 != nullptr && (p2->stateFlags1 & PLAYER_STATE1_PARALLEL) != 0;
 }
 
 extern "C" Actor* ShipCrewCamera_GetSecondTarget(PlayState* play) {
-    if (play == nullptr || sPilot.actor == nullptr || FindPilotActor(play) != sPilot.actor ||
-        !Pilot_TargetIsLive(play, sPilot.lockedTarget))
+    Player* p2 = ShipCrewPilot_GetInteractionPlayer(play);
+    if (p2 == nullptr || !Pilot_TargetIsLive(play, p2->focusActor))
         return nullptr;
-    return sPilot.lockedTarget;
+    return p2->focusActor;
+}
+
+extern "C" s32 ShipCrewCamera_GetSecondNativeMode(PlayState* play) {
+    Player* p2 = ShipCrewPilot_GetInteractionPlayer(play);
+    if (p2 == nullptr)
+        return CAM_MODE_NORMAL;
+    if (p2->focusActor != nullptr)
+        return CAM_MODE_BATTLE;
+    if (p2->stateFlags1 & PLAYER_STATE1_PARALLEL)
+        return CAM_MODE_TARGET;
+    if (p2->stateFlags1 & (PLAYER_STATE1_HANGING_OFF_LEDGE | PLAYER_STATE1_CLIMBING_LEDGE))
+        return CAM_MODE_HANG;
+    if (p2->stateFlags1 & PLAYER_STATE1_CLIMBING_LADDER)
+        return CAM_MODE_CLIMB;
+    if (p2->stateFlags1 & PLAYER_STATE1_JUMPING)
+        return CAM_MODE_JUMP;
+    if (p2->stateFlags1 & PLAYER_STATE1_FREEFALL)
+        return CAM_MODE_FREEFALL;
+    return CAM_MODE_NORMAL;
 }
 
 // Environmental actors can locate P2 even when split-screen rendering is off.
@@ -1830,6 +1890,12 @@ extern "C" void ShipCrewCamera_SetNativeSecondView(PlayState* play, const Vec3f*
     sPilot.cameraUp = *up;
     sPilot.cameraFov = fov;
     sPilot.cameraReady = true;
+}
+
+extern "C" void ShipCrewCamera_SetNativeSecondInputYaw(PlayState* play, s16 yaw) {
+    if (play == nullptr || FindPilotActor(play) != sPilot.actor || sPilot.actor == nullptr)
+        return;
+    sPilot.cameraInputYaw = yaw;
 }
 
 extern "C" s32 ShipCrewCamera_GetSecondView(PlayState* play, Vec3f* eye, Vec3f* at, Vec3f* up, f32* fov) {

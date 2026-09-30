@@ -2642,6 +2642,21 @@ u32 D_80116068[ACTORCAT_MAX] = {
     PLAYER_STATE1_TALKING | PLAYER_STATE1_DEAD | PLAYER_STATE1_IN_ITEM_CS,
 };
 
+Player* ShipCrewPilot_GetInteractionPlayer(PlayState* play);
+
+static s32 ShipCrewActor_ShouldUpdateForSecondPlayer(PlayState* play, Actor* actor) {
+    Player* p2 = ShipCrewPilot_GetInteractionPlayer(play);
+    if (p2 == NULL || actor == NULL || actor == &p2->actor)
+        return false;
+
+    f32 range = actor->uncullZoneForward + actor->uncullZoneScale;
+    range = CLAMP(range, 1200.0f, 3000.0f);
+    const f32 dx = actor->world.pos.x - p2->actor.world.pos.x;
+    const f32 dy = actor->world.pos.y - p2->actor.world.pos.y;
+    const f32 dz = actor->world.pos.z - p2->actor.world.pos.z;
+    return (SQ(dx) + SQ(dy) + SQ(dz)) < SQ(range);
+}
+
 void Actor_UpdateAll(PlayState* play, ActorContext* actorCtx) {
     Actor* refActor;
     Actor* actor;
@@ -2743,7 +2758,8 @@ void Actor_UpdateAll(PlayState* play, ActorContext* actorCtx) {
                 actor->flags &= ~ACTOR_FLAG_SFX_FOR_PLAYER_BODY_HIT;
 
                 if ((DECR(actor->freezeTimer) == 0) &&
-                    (actor->flags & (ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_INSIDE_CULLING_VOLUME))) {
+                    ((actor->flags & (ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_INSIDE_CULLING_VOLUME)) ||
+                     ShipCrewActor_ShouldUpdateForSecondPlayer(play, actor))) {
                     if (actor == player->focusActor) {
                         actor->isTargeted = true;
                     } else {
@@ -3122,6 +3138,7 @@ void Actor_DrawAll(PlayState* play, ActorContext* actorCtx) {
     invisibleActorCounter = 0;
 
     if (ShipCrewCamera_IsSecondaryPass()) {
+        Player* p2 = ShipCrewPilot_GetInteractionPlayer(play);
         // The regular Actor_DrawAll does much more than render: it plays
         // sounds, changes persistent actor culling flags, draws effects and
         // HUD-adjacent objects. The second split view needs only geometry.
@@ -3136,6 +3153,17 @@ void Actor_DrawAll(PlayState* play, ActorContext* actorCtx) {
                 f32 savedProjectedW = actor->projectedW;
                 s32 savedDrawn = actor->isDrawn;
                 s32 savedCulling = (actor->flags & ACTOR_FLAG_INSIDE_CULLING_VOLUME) != 0;
+                f32 savedXZDistToPlayer = actor->xzDistToPlayer;
+                f32 savedYDistToPlayer = actor->yDistToPlayer;
+                f32 savedXYZDistToPlayerSq = actor->xyzDistToPlayerSq;
+                s16 savedYawTowardsPlayer = actor->yawTowardsPlayer;
+
+                if (p2 != NULL && actor != &p2->actor) {
+                    actor->xzDistToPlayer = Actor_WorldDistXZToActor(actor, &p2->actor);
+                    actor->yDistToPlayer = Actor_HeightDiff(actor, &p2->actor);
+                    actor->xyzDistToPlayerSq = SQ(actor->xzDistToPlayer) + SQ(actor->yDistToPlayer);
+                    actor->yawTowardsPlayer = Actor_WorldYawTowardActor(actor, &p2->actor);
+                }
 
                 SkinMatrix_Vec3fMtxFMultXYZW(&play->viewProjectionMtxF, &actor->world.pos, &actor->projectedPos,
                                              &actor->projectedW);
@@ -3147,6 +3175,10 @@ void Actor_DrawAll(PlayState* play, ActorContext* actorCtx) {
                 actor->projectedPos = savedProjectedPos;
                 actor->projectedW = savedProjectedW;
                 actor->isDrawn = savedDrawn;
+                actor->xzDistToPlayer = savedXZDistToPlayer;
+                actor->yDistToPlayer = savedYDistToPlayer;
+                actor->xyzDistToPlayerSq = savedXYZDistToPlayerSq;
+                actor->yawTowardsPlayer = savedYawTowardsPlayer;
                 if (savedCulling) {
                     actor->flags |= ACTOR_FLAG_INSIDE_CULLING_VOLUME;
                 } else {
