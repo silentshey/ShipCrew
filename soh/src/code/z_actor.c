@@ -469,8 +469,8 @@ void Attention_Draw(TargetContext* targetCtx, PlayState* play) {
         s32 i;
 
         FrameInterpolation_RecordOpenChild(actor, sShipCrewReticleSlot == 2 ? 4 : 0);
-        player = (sShipCrewReticleSlot == 2 && sShipCrewP2TargetOwner != NULL) ? sShipCrewP2TargetOwner
-                                                                                      : GET_PLAYER(play);
+        player =
+            (sShipCrewReticleSlot == 2 && sShipCrewP2TargetOwner != NULL) ? sShipCrewP2TargetOwner : GET_PLAYER(play);
 
         spCE = 0xFF;
         var1 = 1.0f;
