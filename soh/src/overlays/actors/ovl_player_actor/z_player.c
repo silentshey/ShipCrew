@@ -556,7 +556,7 @@ static s32 ShipCrewPlayer_IsLocalControlled(Player* player) {
 
 static s16 ShipCrewPlayer_GetInputCameraYaw(PlayState* play) {
     return sShipCrewSecondaryPlayerUpdate ? ShipCrewCamera_GetSecondInputDirYaw(play)
-                                         : Camera_GetInputDirYaw(GET_ACTIVE_CAM(play));
+                                          : Camera_GetInputDirYaw(GET_ACTIVE_CAM(play));
 }
 static u32 sConveyorSpeed = 0;
 static s16 sIsFloorConveyor = false;
@@ -3855,8 +3855,8 @@ void Player_UpdateZTargeting(Player* this, PlayState* play) {
         ignoreLeash = true;
     }
 
-    isTalking = sShipCrewSecondaryPlayerUpdate ? CHECK_FLAG_ALL(this->actor.flags, ACTOR_FLAG_TALK)
-                                               : Player_IsTalking(play);
+    isTalking =
+        sShipCrewSecondaryPlayerUpdate ? CHECK_FLAG_ALL(this->actor.flags, ACTOR_FLAG_TALK) : Player_IsTalking(play);
 
     if (isTalking || (this->zTargetActiveTimer != 0) ||
         (this->stateFlags1 & (PLAYER_STATE1_CHARGING_SPIN_ATTACK | PLAYER_STATE1_BOOMERANG_THROWN))) {
@@ -11949,7 +11949,7 @@ s16 ShipCrewPlayer_GetNativeCameraMode(Player* this) {
     if (this->focusActor != NULL) {
         if (this->stateFlags1 & PLAYER_STATE1_FRIENDLY_ACTOR_FOCUS)
             return (this->stateFlags1 & PLAYER_STATE1_BOOMERANG_THROWN) ? CAM_MODE_FOLLOWBOOMERANG
-                                                                       : CAM_MODE_FOLLOWTARGET;
+                                                                        : CAM_MODE_FOLLOWTARGET;
         return CAM_MODE_BATTLE;
     }
     if (this->stateFlags1 & (PLAYER_STATE1_HANGING_OFF_LEDGE | PLAYER_STATE1_CLIMBING_LEDGE))
