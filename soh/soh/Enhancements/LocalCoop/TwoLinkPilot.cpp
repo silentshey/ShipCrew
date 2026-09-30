@@ -167,6 +167,7 @@ struct PilotRuntime {
     Vec3f cameraEye = {};
     Vec3f cameraUp = { 0.0f, 1.0f, 0.0f };
     f32 cameraFov = 60.0f;
+    s16 cameraInputYaw = 0;
     PilotItemPose itemPose = PilotItemPose::None;
 };
 PilotRuntime sPilot;
@@ -1042,13 +1043,10 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     // Player_UpdateCommon/actionFunc framework and bypass every hand-written
     // pilot movement/roll/crawl/ledge/carry animation below.
     if (CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0) {
-        s16 cameraYaw = actor->shape.rot.y;
-        if (sPilot.cameraReady) {
-            const f32 dx = sPilot.cameraAt.x - sPilot.cameraEye.x;
-            const f32 dz = sPilot.cameraAt.z - sPilot.cameraEye.z;
-            if ((dx * dx + dz * dz) > 0.0001f)
-                cameraYaw = Math_Atan2S(dx, dz);
-        }
+        // Use Camera_GetInputDirYaw's exact output from P2's native Camera.
+        // eye->at is not equivalent in indoor/fixed/target camera modes and
+        // was rotating movement incorrectly at specific camera angles.
+        const s16 cameraYaw = sPilot.cameraReady ? sPilot.cameraInputYaw : actor->shape.rot.y;
 
         Actor* attentionCandidate = nullptr;
         if (pressed & BTN_Z)
@@ -1892,6 +1890,12 @@ extern "C" void ShipCrewCamera_SetNativeSecondView(PlayState* play, const Vec3f*
     sPilot.cameraUp = *up;
     sPilot.cameraFov = fov;
     sPilot.cameraReady = true;
+}
+
+extern "C" void ShipCrewCamera_SetNativeSecondInputYaw(PlayState* play, s16 yaw) {
+    if (play == nullptr || FindPilotActor(play) != sPilot.actor || sPilot.actor == nullptr)
+        return;
+    sPilot.cameraInputYaw = yaw;
 }
 
 extern "C" s32 ShipCrewCamera_GetSecondView(PlayState* play, Vec3f* eye, Vec3f* at, Vec3f* up, f32* fov) {
