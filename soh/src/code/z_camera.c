@@ -47,6 +47,7 @@ Actor* ShipCrewCamera_GetSecondTarget(PlayState* play);
 s32 ShipCrewCamera_GetSecondParallel(PlayState* play);
 s32 ShipCrewCamera_GetSecondNativeMode(PlayState* play);
 void ShipCrewCamera_SetNativeSecondView(PlayState* play, const Vec3f* eye, const Vec3f* at, const Vec3f* up, f32 fov);
+void ShipCrewCamera_SetNativeSecondInputYaw(PlayState* play, s16 yaw);
 static s32 sShipCrewUpdatingNativeSecondCamera = false;
 
 /*===============================================================*/
@@ -7803,6 +7804,7 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
     static Camera p2Camera;
     static PlayState* p2Play = NULL;
     static Player* p2Player = NULL;
+    static s32 p2RoomNum = -1;
     Player* player;
     View originalView;
     s32 originalOOBTimer;
@@ -7814,12 +7816,14 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
     if (play == NULL || gDbgCamEnabled) {
         p2Play = NULL;
         p2Player = NULL;
+        p2RoomNum = -1;
         return;
     }
     player = ShipCrewCamera_GetNativeSecondPlayer(play);
     if (player == NULL || play->cameraPtrs[CAM_ID_MAIN] == NULL || play->mainCamera.status != CAM_STAT_ACTIVE) {
         p2Play = NULL;
         p2Player = NULL;
+        p2RoomNum = -1;
         return;
     }
 
@@ -7832,7 +7836,7 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
     }
     sShipCrewUpdatingNativeSecondCamera = true;
 
-    if (p2Play != play || p2Player != player) {
+    if (p2Play != play || p2Player != player || p2RoomNum != play->roomCtx.curRoom.num) {
         // Copy P1's already-constructed camera configuration/age-dependent
         // defaults, then initialize the independent P2 camera against its
         // own character. The normal game room-setting routine is deliberately
@@ -7854,6 +7858,7 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
         sOOBTimer = 0;
         p2Play = play;
         p2Player = player;
+        p2RoomNum = play->roomCtx.curRoom.num;
     }
 
     // Use the original per-camera target/battle solver, never P1's global lock.
@@ -7874,6 +7879,7 @@ void ShipCrewCamera_UpdateNativeSecondPlayer(PlayState* play) {
 
     // Camera_Update writes the rendered eye/at/up/fov into play->view.
     // Capture that output BEFORE restoring P1's global renderer state.
+    ShipCrewCamera_SetNativeSecondInputYaw(play, p2Camera.inputDir.y);
     ShipCrewCamera_SetNativeSecondView(play, &play->view.eye, &play->view.lookAt, &play->view.up, play->view.fovy);
 
     play->view = originalView;
