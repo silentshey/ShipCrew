@@ -3844,7 +3844,8 @@ void Player_UpdateZTargeting(Player* this, PlayState* play) {
         ignoreLeash = true;
     }
 
-    isTalking = sShipCrewPilotFullNativeFrame ? CHECK_FLAG_ALL(this->actor.flags, ACTOR_FLAG_TALK) : Player_IsTalking(play);
+    isTalking =
+        sShipCrewPilotFullNativeFrame ? CHECK_FLAG_ALL(this->actor.flags, ACTOR_FLAG_TALK) : Player_IsTalking(play);
 
     if (isTalking || (this->zTargetActiveTimer != 0) ||
         (this->stateFlags1 & (PLAYER_STATE1_CHARGING_SPIN_ATTACK | PLAYER_STATE1_BOOMERANG_THROWN))) {
@@ -3869,9 +3870,8 @@ void Player_UpdateZTargeting(Player* this, PlayState* play) {
 
                 // P2 is locally controlled even though its actor remains in
                 // ACTORCAT_NPC to avoid singleton P1 HUD/cutscene ownership.
-                usingHoldTargeting =
-                    (gSaveContext.zTargetSetting != 0) ||
-                    (!sShipCrewPilotFullNativeFrame && (this->actor.category != ACTORCAT_PLAYER));
+                usingHoldTargeting = (gSaveContext.zTargetSetting != 0) ||
+                                     (!sShipCrewPilotFullNativeFrame && (this->actor.category != ACTORCAT_PLAYER));
 
                 this->stateFlags1 |= PLAYER_STATE1_Z_TARGETING;
 
@@ -3882,8 +3882,7 @@ void Player_UpdateZTargeting(Player* this, PlayState* play) {
                     // In this case, `nextLockOnActor` will be the arrow hover actor instead.
                     if ((nextLockOnActor == this->focusActor) &&
                         (sShipCrewPilotFullNativeFrame || (this->actor.category == ACTORCAT_PLAYER))) {
-                        nextLockOnActor =
-                            sShipCrewPilotFullNativeFrame ? NULL : play->actorCtx.targetCtx.unk_94;
+                        nextLockOnActor = sShipCrewPilotFullNativeFrame ? NULL : play->actorCtx.targetCtx.unk_94;
                     }
 
                     if (GameInteractor_Should(VB_TOGGLE_Z_TARGET_SWITCH_TARGETS, nextLockOnActor != this->focusActor)) {
@@ -13939,7 +13938,7 @@ static void ShipCrewPlayer_RestoreNativeFrameGlobals(const ShipCrewPlayerNativeF
 // NPC actor category so singleton interface/cutscene/audio ownership remains
 // with P1; the scoped flags above only localize input yaw and Z-target logic.
 s32 ShipCrewPlayer_UpdateFullNativeFrameForPilot(PlayState* play, Player* player, Input* input, s16 cameraYaw,
-                                                  Actor* attentionCandidate, Actor* contextActor) {
+                                                 Actor* attentionCandidate, Actor* contextActor) {
     if (play == NULL || player == NULL || input == NULL || player->ageProperties == NULL)
         return false;
 
