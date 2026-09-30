@@ -449,6 +449,8 @@ static s32 sShipCrewReticleSlot = 0; // 0 full, 1 P1 left, 2 P2 right
 static TargetContext sShipCrewP2TargetCtx;
 static Player* sShipCrewP2TargetOwner = NULL;
 
+void Attention_Update(TargetContext* targetCtx, Player* player, Actor* actorArg, PlayState* play);
+
 void Attention_Draw(TargetContext* targetCtx, PlayState* play) {
     Actor* actor = targetCtx->targetedActor;
 
