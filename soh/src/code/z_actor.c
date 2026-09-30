@@ -2249,14 +2249,15 @@ s32 ShipCrewActor_IsSecondPlayerWithinXZ(PlayState* play, Actor* actor, f32 dist
     return dx * dx + dz * dz < distance * distance;
 }
 
-static s32 ShipCrewActor_OfferCarryToPlayer(Actor* actor, Player* player) {
+s32 ShipCrewActor_OfferGetItemToSecondPlayer(Actor* actor, PlayState* play, s32 getItemId, f32 xzRange, f32 yRange) {
+    Player* player = ShipCrewPilot_GetInteractionPlayer(play);
     f32 dx;
     f32 dz;
     f32 dy;
     s16 actorToPlayerYaw;
     s32 absYawDiff;
 
-    if (actor == NULL || player == NULL ||
+    if (actor == NULL || play == NULL || player == NULL ||
         (player->stateFlags1 &
          (PLAYER_STATE1_DEAD | PLAYER_STATE1_CHARGING_SPIN_ATTACK | PLAYER_STATE1_HANGING_OFF_LEDGE |
           PLAYER_STATE1_CLIMBING_LEDGE | PLAYER_STATE1_JUMPING | PLAYER_STATE1_FREEFALL |
@@ -2268,15 +2269,15 @@ static s32 ShipCrewActor_OfferCarryToPlayer(Actor* actor, Player* player) {
     dx = player->actor.world.pos.x - actor->world.pos.x;
     dz = player->actor.world.pos.z - actor->world.pos.z;
     dy = player->actor.world.pos.y - actor->world.pos.y;
-    if ((dx * dx + dz * dz) >= SQ(50.0f) || fabsf(dy) >= 10.0f)
+    if ((dx * dx + dz * dz) >= SQ(xzRange) || fabsf(dy) >= yRange)
         return false;
 
     // Match Actor_OfferGetItem's native facing score. yawTowardsPlayer is
     // actor->player, so a Link facing the actor yields an absolute 0x8000.
     actorToPlayerYaw = Math_Atan2S(dx, dz);
     absYawDiff = ABS((s16)(actorToPlayerYaw - player->actor.shape.rot.y));
-    if (player->getItemDirection < absYawDiff) {
-        player->getItemId = GI_NONE;
+    if ((getItemId != GI_NONE) || (player->getItemDirection < absYawDiff)) {
+        player->getItemId = getItemId;
         player->interactRangeActor = actor;
         player->getItemDirection = absYawDiff;
         return true;
@@ -2294,7 +2295,7 @@ void Actor_OfferCarry(Actor* actor, PlayState* play) {
     // actor by hand in TwoLinkPilot.
     p2 = ShipCrewPilot_GetInteractionPlayer(play);
     if (p2 != NULL)
-        ShipCrewActor_OfferCarryToPlayer(actor, p2);
+        ShipCrewActor_OfferGetItemToSecondPlayer(actor, play, GI_NONE, 50.0f, 10.0f);
 }
 
 u32 Actor_HasNoParent(Actor* actor, PlayState* play) {
