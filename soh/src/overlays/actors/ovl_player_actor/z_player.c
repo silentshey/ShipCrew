@@ -14113,6 +14113,9 @@ typedef struct {
     s32 heldItemButtonIsHeldDown;
 } ShipCrewPlayerStaticRuntimeState;
 
+static ShipCrewPlayerStaticRuntimeState sShipCrewP2StaticRuntime;
+static Player* sShipCrewP2StaticRuntimeOwner = NULL;
+
 static void ShipCrewPlayer_SaveStaticRuntime(ShipCrewPlayerStaticRuntimeState* state) {
     state->savedCurrentMask = sSavedCurrentMask;
     state->interactWallCheckResult = sInteractWallCheckResult;
@@ -14165,11 +14168,24 @@ s32 ShipCrewPlayer_UpdateNativePilotCore(PlayState* play, Player* player, Input*
     if (play == NULL || player == NULL || input == NULL || player == GET_PLAYER(play))
         return false;
 
-    ShipCrewPlayerStaticRuntimeState savedRuntime;
+    ShipCrewPlayerStaticRuntimeState savedPrimaryRuntime;
     TargetContext savedPrimaryTarget = play->actorCtx.targetCtx;
     TargetContext* secondTarget;
 
-    ShipCrewPlayer_SaveStaticRuntime(&savedRuntime);
+    // OoT stores several pieces of Player simulation state as file statics.
+    // Give P2 its own persistent copy instead of borrowing P1's previous
+    // stick/floor/wall/conveyor/item state each frame.
+    ShipCrewPlayer_SaveStaticRuntime(&savedPrimaryRuntime);
+    if (sShipCrewP2StaticRuntimeOwner != player) {
+        memset(&sShipCrewP2StaticRuntime, 0, sizeof(sShipCrewP2StaticRuntime));
+        sShipCrewP2StaticRuntime.waterSpeedFactor = 1.0f;
+        sShipCrewP2StaticRuntime.invWaterSpeedFactor = 1.0f;
+        sShipCrewP2StaticRuntime.prevFloorProperty = player->floorProperty;
+        sShipCrewP2StaticRuntime.controlStickWorldYaw = player->actor.shape.rot.y;
+        sShipCrewP2StaticRuntimeOwner = player;
+    }
+    ShipCrewPlayer_RestoreStaticRuntime(&sShipCrewP2StaticRuntime);
+
     ShipCrewAttention_UpdateSecondPlayer(play, player);
     secondTarget = ShipCrewAttention_GetSecondContext(play, player);
     if (secondTarget != NULL)
@@ -14179,10 +14195,14 @@ s32 ShipCrewPlayer_UpdateNativePilotCore(PlayState* play, Player* player, Input*
     Player_UpdateCommon(player, play, input);
     sShipCrewSecondaryPlayerUpdate = false;
 
+    // Persist exactly the native globals P2 produced, then put P1's globals
+    // back before any other actor/camera/HUD code can observe them.
+    ShipCrewPlayer_SaveStaticRuntime(&sShipCrewP2StaticRuntime);
+    sShipCrewP2StaticRuntime.controlInput = NULL;
     if (secondTarget != NULL)
         *secondTarget = play->actorCtx.targetCtx;
     play->actorCtx.targetCtx = savedPrimaryTarget;
-    ShipCrewPlayer_RestoreStaticRuntime(&savedRuntime);
+    ShipCrewPlayer_RestoreStaticRuntime(&savedPrimaryRuntime);
     return true;
 }
 
