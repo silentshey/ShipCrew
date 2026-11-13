@@ -118,6 +118,7 @@ enum class PilotDodge { None, SideLeft, Backflip, SideRight };
 enum class PilotCrawl { None, Enter, Move, Exit };
 struct PilotRuntime {
     Actor* actor = nullptr;
+    bool initializedWithOmnibus = false;
     Actor* heldBomb = nullptr;
     Actor* lockedTarget = nullptr;
     Actor* pickupCandidate = nullptr;
@@ -1008,6 +1009,7 @@ void Pilot_Init(Actor* actor, PlayState* play) {
 
     sPilot = {};
     sPilot.actor = actor;
+    sPilot.initializedWithOmnibus = Pilot_OmnibusOn();
     sPilot.lastObservedBombAmmo = AMMO(ITEM_BOMB);
     sPilot.lastObservedNutAmmo = AMMO(ITEM_NUT);
     NameTag_RegisterForActorWithOptions(actor, "P2 PILOT", {});
@@ -1049,6 +1051,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     if (sPilot.actor != actor) {
         sPilot = {};
         sPilot.actor = actor;
+        sPilot.initializedWithOmnibus = Pilot_OmnibusOn();
     }
     PilotNativeBodyCollision registerBodyCollider{ play, player };
 
@@ -1859,6 +1862,16 @@ void Pilot_RegisterHooks() {
             if (pilot != nullptr) {
                 Actor_Kill(pilot);
             }
+            sSpawnAttempted = false;
+            return;
+        }
+
+        // Recreate the P2 actor if omnibus was toggled after initialization.
+        // The old pilot discarded the original sword blur, so just changing
+        // the update branch would leave a half-initialized combat player.
+        if (pilot != nullptr && sPilot.actor == pilot &&
+            sPilot.initializedWithOmnibus != Pilot_OmnibusOn()) {
+            Actor_Kill(pilot);
             sSpawnAttempted = false;
             return;
         }

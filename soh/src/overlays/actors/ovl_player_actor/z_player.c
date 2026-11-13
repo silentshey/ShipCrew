@@ -1604,7 +1604,12 @@ BAD_RETURN(s32) func_80832224(Player* this) {
 }
 
 s32 Player_IsTalking(PlayState* play) {
-    Player* this = GET_PLAYER(play);
+    // Follow P2's dialogue state only inside its isolated native update.
+    // Outside that scope the one shared dialogue/UI still belongs to P1.
+    Player* this = (sShipCrewPilotFullNativeFrame && sShipCrewPilotFramePlayer != NULL &&
+                    CVarGetInteger(CVAR_SETTING("ShipCrew.P2Omnibus"), 0) != 0)
+                       ? sShipCrewPilotFramePlayer
+                       : GET_PLAYER(play);
 
     return CHECK_FLAG_ALL(this->actor.flags, ACTOR_FLAG_TALK);
 }

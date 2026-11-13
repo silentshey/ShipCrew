@@ -19,6 +19,8 @@ available if omnibus is disabled.
 - P2 gets a nearby, facing-filtered NPC talk candidate and the native talk initialization targets P2
   while its update is active (one global MessageContext remains).
 - P2's C HUD icons mirror the shared equipped C slots rather than falsely showing bomb/nut defaults.
+- P2 Start is forwarded only to KaleidoSetup so either controller can open the **shared** inventory menu.
+- Toggling omnibus on an existing P2 respawns that actor so its native combat effects are initialized.
 - Shared floor scene exits, native crawl/ledge/ladder handling and prop offers are inherited from PR #33.
 - Cleanup releases P2's original colliders and sword effect without calling Player_Destroy, which would
   reset global save/magic state.
