@@ -1869,8 +1869,7 @@ void Pilot_RegisterHooks() {
         // Recreate the P2 actor if omnibus was toggled after initialization.
         // The old pilot discarded the original sword blur, so just changing
         // the update branch would leave a half-initialized combat player.
-        if (pilot != nullptr && sPilot.actor == pilot &&
-            sPilot.initializedWithOmnibus != Pilot_OmnibusOn()) {
+        if (pilot != nullptr && sPilot.actor == pilot && sPilot.initializedWithOmnibus != Pilot_OmnibusOn()) {
             Actor_Kill(pilot);
             sSpawnAttempted = false;
             return;
