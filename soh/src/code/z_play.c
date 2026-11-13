@@ -1137,7 +1137,18 @@ void Play_Update(PlayState* play) {
 
             if ((gSaveContext.gameMode == GAMEMODE_NORMAL) && (play->msgCtx.msgMode == MSGMODE_NONE) &&
                 (play->gameOverCtx.state == GAMEOVER_INACTIVE)) {
+                // P2's Start opens the shared inventory/pause UI. Inject only
+                // for KaleidoSetup and restore P1 input immediately after.
+                // This is NOT an independent P2 inventory or pause screen.
+                const u16 savedStart = input[0].press.button & BTN_START;
+                if (CVarGetInteger(CVAR_SETTING("ShipCrew.P2Omnibus"), 0) != 0 &&
+                    CHECK_BTN_ALL(input[1].press.button, BTN_START)) {
+                    input[0].press.button |= BTN_START;
+                }
                 KaleidoSetup_Update(play);
+                if (!savedStart) {
+                    input[0].press.button &= ~BTN_START;
+                }
             }
 
             PLAY_LOG(3551);

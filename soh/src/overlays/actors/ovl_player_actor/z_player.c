@@ -544,6 +544,7 @@ static s32 sShipCrewPilotNativeLedge = false;
 // Full native P2 frame: reuse Player_UpdateCommon/action funcs while keeping
 // the engine's singleton HUD/camera ownership on P1.
 static s32 sShipCrewPilotFullNativeFrame = false;
+static Player* sShipCrewPilotFramePlayer = NULL;
 static s16 sShipCrewPilotCameraYaw = 0;
 static Actor* sShipCrewPilotAttentionCandidate = NULL;
 
@@ -1603,7 +1604,12 @@ BAD_RETURN(s32) func_80832224(Player* this) {
 }
 
 s32 Player_IsTalking(PlayState* play) {
-    Player* this = GET_PLAYER(play);
+    // Follow P2's dialogue state only inside its isolated native update.
+    // Outside that scope the one shared dialogue/UI still belongs to P1.
+    Player* this = (sShipCrewPilotFullNativeFrame && sShipCrewPilotFramePlayer != NULL &&
+                    CVarGetInteger(CVAR_SETTING("ShipCrew.P2Omnibus"), 0) != 0)
+                       ? sShipCrewPilotFramePlayer
+                       : GET_PLAYER(play);
 
     return CHECK_FLAG_ALL(this->actor.flags, ACTOR_FLAG_TALK);
 }
@@ -2650,7 +2656,10 @@ void Player_StartChangingHeldItem(Player* this, PlayState* play) {
 }
 
 void Player_UpdateItems(Player* this, PlayState* play) {
-    if ((this->actor.category == ACTORCAT_PLAYER) &&
+    // Route P2's controller B/C and equipped items through the original Link
+    // handler, instead of the older P2-only bomb/nut simulation. The item
+    // mapping and inventory remain the canonical shared save.
+    if ((this->actor.category == ACTORCAT_PLAYER || sShipCrewPilotFullNativeFrame) &&
         GameInteractor_Should(VB_ALLOW_QUICK_PUTAWAY, !(this->stateFlags1 & PLAYER_STATE1_START_CHANGING_HELD_ITEM)) &&
         ((this->heldItemAction == this->itemAction) || (this->stateFlags1 & PLAYER_STATE1_SHIELDING)) &&
         (gSaveContext.health != 0) && (play->csCtx.state == CS_STATE_IDLE) && (this->csAction == 0) &&
@@ -13956,13 +13965,19 @@ s32 ShipCrewPlayer_UpdateFullNativeFrameForPilot(PlayState* play, Player* player
         player->interactRangeActor = contextActor;
 
     AnimationContext_SetNextQueue(play);
+    const s32 savedCrawl = sShipCrewPilotNativeCrawl;
     sShipCrewPilotFullNativeFrame = true;
+    sShipCrewPilotFramePlayer = player;
+    // P2 must not take over P1's CAM_ID_MAIN crawl exit cutscene.
+    sShipCrewPilotNativeCrawl = true;
     sShipCrewPilotCameraYaw = cameraYaw;
     sShipCrewPilotAttentionCandidate = attentionCandidate;
 
     Player_UpdateCommon(player, play, input);
 
     sShipCrewPilotAttentionCandidate = NULL;
+    sShipCrewPilotNativeCrawl = savedCrawl;
+    sShipCrewPilotFramePlayer = NULL;
     sShipCrewPilotFullNativeFrame = false;
     AnimationContext_SetNextQueue(play);
     ShipCrewPlayer_RestoreNativeFrameGlobals(&saved);
@@ -17344,7 +17359,12 @@ s32 Player_InflictDamageModified(PlayState* play, s32 damage, u8 modified) {
  * For item exchanges see relevant code in `Player_ActionHandler_13` and `Player_Action_ExchangeItem`.
  */
 void Player_StartTalking(PlayState* play, Actor* actor) {
-    Player* this = GET_PLAYER(play);
+    // In the deliberately unsafe omnibus test, allow P2's native talk action
+    // to own its animation/actor flags. MessageContext is still shared.
+    Player* this = (sShipCrewPilotFullNativeFrame && sShipCrewPilotFramePlayer != NULL &&
+                    CVarGetInteger(CVAR_SETTING("ShipCrew.P2Omnibus"), 0) != 0)
+                       ? sShipCrewPilotFramePlayer
+                       : GET_PLAYER(play);
     s32 pad;
 
     if ((this->talkActor != NULL) || (actor == this->naviActor) ||
