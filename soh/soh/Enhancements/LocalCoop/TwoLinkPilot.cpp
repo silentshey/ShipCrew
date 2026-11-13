@@ -70,6 +70,7 @@ s32 ShipCrewPlayer_UpdateFullNativeFrameForPilot(PlayState* play, Player* player
 #define SHIPCREW_SPLIT_CVAR CVAR_SETTING("ShipCrew.SplitScreenPilot")
 #define SHIPCREW_NATIVE_LOCOMOTION_CVAR CVAR_SETTING("ShipCrew.P2NativeLocomotion")
 #define SHIPCREW_NATIVE_TRAVERSAL_CVAR CVAR_SETTING("ShipCrew.P2NativeTraversal")
+#define SHIPCREW_OMNIBUS_CVAR CVAR_SETTING("ShipCrew.P2Omnibus")
 
 namespace {
 
@@ -99,6 +100,10 @@ bool sSpawningLocalPilot = false;
 bool sSpawnAttempted = false;
 // Render-pass flag used by z_view.c to keep independent interpolation history.
 bool sRenderingSecondCamera = false;
+
+// Deliberately dangerous, opt-in one-switch integration test. Never modify
+// the player's other saved controller CVars when this is toggled.
+bool Pilot_OmnibusOn() { return CVarGetInteger(SHIPCREW_OMNIBUS_CVAR, 0) != 0; }
 
 // This runtime belongs to the one experimental P2 actor; never borrow P1's
 // action state or animation tables. When expanded to 4 players, move this
@@ -218,7 +223,7 @@ void Pilot_ClearTraversal(Actor* actor, Player* player) {
     sPilot.traversal = PilotTraversal::None;
     sPilot.ledgeProbeFrames = 0;
     player->stateFlags1 &= ~(PLAYER_STATE1_HANGING_OFF_LEDGE | PLAYER_STATE1_CLIMBING_LEDGE | PLAYER_STATE1_JUMPING);
-    if (CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0)
+    if ((Pilot_OmnibusOn() || CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0))
         ShipCrewPlayer_ResetNativeGravity(player);
     else
         actor->gravity = kPilotGravity;
@@ -265,7 +270,7 @@ void Pilot_BeginJump(Player* player, f32 verticalSpeed) {
     Actor* actor = &player->actor;
     // P1 initializes vertical motion with its runtime gravity register and
     // a -20 terminal velocity; hostile Z falls use P1's -1.2 override.
-    if (CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0) {
+    if ((Pilot_OmnibusOn() || CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0)) {
         ShipCrewPlayer_ResetNativeGravity(player);
         if (sPilot.lockedTarget != nullptr)
             actor->gravity = -1.2f;
@@ -402,7 +407,7 @@ void Pilot_ClearLadder(Player* player) {
     sPilot.ladderCooldown = 16;
     player->stateFlags1 &= ~PLAYER_STATE1_CLIMBING_LADDER;
     player->stateFlags2 &= ~PLAYER_STATE2_STATIONARY_LADDER;
-    if (CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0)
+    if ((Pilot_OmnibusOn() || CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0))
         ShipCrewPlayer_ResetNativeGravity(player);
     else
         player->actor.gravity = kPilotGravity;
@@ -940,6 +945,30 @@ void Pilot_UseNut(Actor* actor, PlayState* play) {
     }
 }
 
+// Minimal P2-only talk candidate bridge. Stock NPC offer code targets the
+// global P1, so this deliberately experimental scan supplies P2's native
+// Player_ActionHandler_Talk with its own nearby actor. Scripts/messages remain
+// global: simultaneous conversations and complex quest interactions are unsafe.
+Actor* Pilot_FindTalkCandidate(PlayState* play, Player* player) {
+    Actor* best = nullptr;
+    f32 bestDistanceSquared = 95.0f * 95.0f;
+    const f32 yaw = static_cast<f32>(player->actor.shape.rot.y) / kRadiansToN64Angle;
+    for (Actor* npc = play->actorCtx.actorLists[ACTORCAT_NPC].head; npc != nullptr; npc = npc->next) {
+        if (npc == &player->actor || npc->update == nullptr || npc->textId == 0 ||
+            !(npc->flags & ACTOR_FLAG_ATTENTION_ENABLED))
+            continue;
+        const f32 dx = npc->world.pos.x - player->actor.world.pos.x;
+        const f32 dz = npc->world.pos.z - player->actor.world.pos.z;
+        const f32 dy = npc->world.pos.y - player->actor.world.pos.y;
+        const f32 d2 = dx * dx + dz * dz + dy * dy;
+        if (d2 >= bestDistanceSquared || (dx * std::sin(yaw) + dz * std::cos(yaw)) < -10.0f)
+            continue;
+        best = npc;
+        bestDistanceSquared = d2;
+    }
+    return best;
+}
+
 void Pilot_Init(Actor* actor, PlayState* play) {
     auto* player = reinterpret_cast<Player*>(actor);
     Player* mainPlayer = GET_PLAYER(play);
@@ -957,13 +986,18 @@ void Pilot_Init(Actor* actor, PlayState* play) {
     Player_SetModelGroup(player, Player_ActionToModelGroup(player, player->heldItemAction));
     play->playerInit(player, play, gPlayerSkelHeaders[gSaveContext.linkAge]);
 
-    // It is a visual/input probe, not yet a combat-capable player.
-    Effect_Delete(play, player->meleeWeaponEffectIndex);
-    player->meleeWeaponEffectIndex = TOTAL_EFFECT_COUNT;
+    // Keep the real P1-created sword blur/collider pipeline in omnibus mode.
+    // Earlier P2 pilots deleted the sword effect before combat could run.
+    if (!Pilot_OmnibusOn()) {
+        Effect_Delete(play, player->meleeWeaponEffectIndex);
+        player->meleeWeaponEffectIndex = TOTAL_EFFECT_COUNT;
+        actor->flags |= ACTOR_FLAG_LOCK_ON_DISABLED;
+    } else {
+        actor->flags &= ~ACTOR_FLAG_LOCK_ON_DISABLED;
+    }
     play->func_11D54(player, play);
-    actor->flags |= ACTOR_FLAG_LOCK_ON_DISABLED;
     actor->colChkInfo.mass = MASS_IMMOVABLE;
-    if (CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0)
+    if ((Pilot_OmnibusOn() || CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0))
         ShipCrewPlayer_ResetNativeGravity(player);
     else {
         actor->gravity = kPilotGravity;
@@ -984,6 +1018,10 @@ struct PilotNativeBodyCollision {
     Player* player;
     ~PilotNativeBodyCollision() {
         if (player->ageProperties == nullptr)
+            return;
+        // Player_UpdateCommon already registered this cylinder as OC/AC.
+        // The old pilot RAII pass must not double-register it.
+        if (Pilot_OmnibusOn() || CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0)
             return;
         // P1 uses its ordinary movable mass for normal play. The pilot's
         // old always-IMMOVABLE NPC mass prevented genuine body response
@@ -1042,7 +1080,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     // Native locomotion now means exactly that: run Player 2 through P1's
     // Player_UpdateCommon/actionFunc framework and bypass every hand-written
     // pilot movement/roll/crawl/ledge/carry animation below.
-    if (CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0) {
+    if ((Pilot_OmnibusOn() || CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0)) {
         // Use Camera_GetInputDirYaw's exact output from P2's native Camera.
         // eye->at is not equivalent in indoor/fixed/target camera modes and
         // was rotating movement incorrectly at specific camera angles.
@@ -1055,6 +1093,13 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         Actor* contextActor = nullptr;
         if (!(player->stateFlags1 & PLAYER_STATE1_CARRYING_ACTOR) && player->heldActor == nullptr)
             contextActor = Pilot_FindContextProp(play, player);
+
+        // The native Player action handler may initiate standard NPC dialogue
+        // from a P2-owned talkActor; no global GET_PLAYER swap is performed.
+        if (Pilot_OmnibusOn() && (pressed & BTN_A) && contextActor == nullptr &&
+            player->talkActor == nullptr && Message_GetState(&play->msgCtx) == TEXT_STATE_NONE) {
+            player->talkActor = Pilot_FindTalkCandidate(play, player);
+        }
 
         // Mirror shared equipment before native actions choose their model
         // groups. The Player object, animation state, roll/crawl/carry state
@@ -1091,7 +1136,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     // the P2 camera is still initializing.
     f32 worldX = x;
     f32 worldZ = z;
-    if (CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) != 0 && sPilot.cameraReady) {
+    if ((Pilot_OmnibusOn() || CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) != 0) && sPilot.cameraReady) {
         const f32 forwardX = sPilot.cameraAt.x - sPilot.cameraEye.x;
         const f32 forwardZ = sPilot.cameraAt.z - sPilot.cameraEye.z;
         const f32 horizontalLength = std::sqrt(forwardX * forwardX + forwardZ * forwardZ);
@@ -1168,7 +1213,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
     Actor* heldBomb = Pilot_FindHeldBomb(actor, play);
     // The original action button releases a carried bomb first. Otherwise A
     // rolls while running; there is no manual A-button jump.
-    const bool nativeMovement = CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0;
+    const bool nativeMovement = (Pilot_OmnibusOn() || CVarGetInteger(SHIPCREW_NATIVE_LOCOMOTION_CVAR, 0) != 0);
     const bool nativeTraversal = nativeMovement && CVarGetInteger(SHIPCREW_NATIVE_TRAVERSAL_CVAR, 0) != 0;
     if (nativeTraversal && ShipCrewPlayer_IsNativeLedgeAction(player)) {
         ShipCrewPlayer_UpdateNativeLedgeForPilot(play, player, &play->state.input[1]);
@@ -1522,7 +1567,7 @@ void Pilot_Update(Actor* actor, PlayState* play) {
         return;
     }
     Actor_SetFocus(actor, 40.0f);
-    if (CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) == 0) {
+    if ((!Pilot_OmnibusOn() && CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) == 0)) {
         sPilot.cameraReady = false;
     }
     const bool grounded = (actor->bgCheckFlags & BGCHECKFLAG_GROUND) != 0;
@@ -1740,6 +1785,18 @@ void Pilot_Destroy(Actor* actor, PlayState* play) {
     if (carriedProp != nullptr && carriedProp->parent == actor)
         Pilot_DetachProp(reinterpret_cast<Player*>(actor), carriedProp, false);
     NameTag_RemoveAllForActor(actor);
+    // The actor was allocated as a real Player, not a generic NPC: release
+    // its native collision primitives without calling Player_Destroy, which
+    // also resets the one shared Magic/save context.
+    Player* player = reinterpret_cast<Player*>(actor);
+    if (player->ageProperties != nullptr) {
+        if (player->meleeWeaponEffectIndex < TOTAL_EFFECT_COUNT)
+            Effect_Delete(play, player->meleeWeaponEffectIndex);
+        Collider_DestroyCylinder(play, &player->cylinder);
+        Collider_DestroyQuad(play, &player->meleeWeaponQuads[0]);
+        Collider_DestroyQuad(play, &player->meleeWeaponQuads[1]);
+        Collider_DestroyQuad(play, &player->shieldQuad);
+    }
     if (sPilot.actor == actor) {
         // A carried bomb must be freed before its P2 parent is destroyed.
         // Leave the live bomb in the shared world rather than leaking a
@@ -1795,7 +1852,7 @@ void Pilot_RegisterHooks() {
         Actor* pilot = FindPilotActor(play);
         // Existing Ivan fairy co-op also consumes controller port 2. Do not
         // compete for that port while our experimental pilot is enabled.
-        if (CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0 ||
+        if ((!Pilot_OmnibusOn() && CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0) ||
             CVarGetInteger(CVAR_ENHANCEMENT("IvanCoopModeEnabled"), 0) != 0) {
             if (pilot != nullptr) {
                 Actor_Kill(pilot);
@@ -1860,7 +1917,7 @@ extern "C" s32 ShipCrewCamera_GetSecondNativeMode(PlayState* play) {
 
 // Environmental actors can locate P2 even when split-screen rendering is off.
 extern "C" Player* ShipCrewPilot_GetInteractionPlayer(PlayState* play) {
-    if (play == nullptr || GET_PLAYER(play) == nullptr || CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0 ||
+    if (play == nullptr || GET_PLAYER(play) == nullptr || (!Pilot_OmnibusOn() && CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0) ||
         CVarGetInteger(CVAR_ENHANCEMENT("IvanCoopModeEnabled"), 0) != 0)
         return nullptr;
     Actor* actor = FindPilotActor(play);
@@ -1868,7 +1925,7 @@ extern "C" Player* ShipCrewPilot_GetInteractionPlayer(PlayState* play) {
 }
 
 extern "C" Player* ShipCrewCamera_GetNativeSecondPlayer(PlayState* play) {
-    if (play == nullptr || CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0 || CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) == 0 ||
+    if (play == nullptr || (!Pilot_OmnibusOn() && CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0) || (!Pilot_OmnibusOn() && CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) == 0) ||
         CVarGetInteger(CVAR_ENHANCEMENT("IvanCoopModeEnabled"), 0) != 0 || play->activeCamera != CAM_ID_MAIN ||
         play->pauseCtx.state != 0 || play->pauseCtx.debugState != 0 || play->csCtx.state != CS_STATE_IDLE ||
         R_PAUSE_MENU_MODE != 0 || GET_PLAYER(play) == nullptr || play->roomCtx.curRoom.meshHeader == nullptr ||

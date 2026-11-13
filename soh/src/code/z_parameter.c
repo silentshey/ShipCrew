@@ -5157,7 +5157,14 @@ static void ShipCrew_DrawDualCButtons(PlayState* play) {
     const s16 x[2] = { 91, 251 };
     const s16 p1[3] = { gSaveContext.equips.buttonItems[1], gSaveContext.equips.buttonItems[2],
                         gSaveContext.equips.buttonItems[3] };
-    const s16 p2[3] = { ITEM_BOMB, ITEM_NONE, ITEM_NUT };
+    // Omnibus P2 uses the exact native P1 item-button dispatcher. Both
+    // characters read the same equipped C slots until separate inventory
+    // allocation is implemented.
+    const s16 p2[3] = {
+        CVarGetInteger(CVAR_SETTING("ShipCrew.P2Omnibus"), 0) != 0 ? p1[0] : ITEM_BOMB,
+        CVarGetInteger(CVAR_SETTING("ShipCrew.P2Omnibus"), 0) != 0 ? p1[1] : ITEM_NONE,
+        CVarGetInteger(CVAR_SETTING("ShipCrew.P2Omnibus"), 0) != 0 ? p1[2] : ITEM_NUT,
+    };
     const s16 alpha[3] = { interfaceCtx->cLeftAlpha, interfaceCtx->cDownAlpha, interfaceCtx->cRightAlpha };
     for (s32 player = 0; player < 2; ++player) {
         const s16* items = player == 0 ? p1 : p2;

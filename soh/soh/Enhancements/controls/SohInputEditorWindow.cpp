@@ -1631,6 +1631,17 @@ void SohInputEditorWindow::DrawLinkTab() {
         DrawSetDefaultsButton(portIndex);
         DrawDeviceToggles(portIndex);
 
+        CVarCheckbox("ShipCrew: OMNIBUS Native P2 Systems (DANGEROUS TEST)",
+                     CVAR_SETTING("ShipCrew.P2Omnibus"),
+                     CheckboxOptions()
+                         .Color(THEME_COLOR)
+                         .Tooltip("ONE SWITCH: P2 actor + independent split camera + original Link action system.\\n"
+                                  "Enables P2 native movement, Z targeting, B/C equipment and items, sword/shield "
+                                  "collision/effects, object interaction and experimental NPC dialogue.\\n"
+                                  "Both Links still share one save, inventory, pause state, scene and messages.\\n"
+                                  "This can crash, softlock quests, corrupt a test save or break cinematics. "
+                                  "BACK UP SAVES. Disable to return to the existing pilots."));
+
         CVarCheckbox("ShipCrew: Two-Link Controller Pilot (Experimental)", CVAR_SETTING("ShipCrew.TwoLinkPilot"),
                      CheckboxOptions()
                          .Color(THEME_COLOR)
