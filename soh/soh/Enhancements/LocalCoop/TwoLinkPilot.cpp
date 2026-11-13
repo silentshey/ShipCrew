@@ -103,7 +103,9 @@ bool sRenderingSecondCamera = false;
 
 // Deliberately dangerous, opt-in one-switch integration test. Never modify
 // the player's other saved controller CVars when this is toggled.
-bool Pilot_OmnibusOn() { return CVarGetInteger(SHIPCREW_OMNIBUS_CVAR, 0) != 0; }
+bool Pilot_OmnibusOn() {
+    return CVarGetInteger(SHIPCREW_OMNIBUS_CVAR, 0) != 0;
+}
 
 // This runtime belongs to the one experimental P2 actor; never borrow P1's
 // action state or animation tables. When expanded to 4 players, move this
@@ -1096,8 +1098,8 @@ void Pilot_Update(Actor* actor, PlayState* play) {
 
         // The native Player action handler may initiate standard NPC dialogue
         // from a P2-owned talkActor; no global GET_PLAYER swap is performed.
-        if (Pilot_OmnibusOn() && (pressed & BTN_A) && contextActor == nullptr &&
-            player->talkActor == nullptr && Message_GetState(&play->msgCtx) == TEXT_STATE_NONE) {
+        if (Pilot_OmnibusOn() && (pressed & BTN_A) && contextActor == nullptr && player->talkActor == nullptr &&
+            Message_GetState(&play->msgCtx) == TEXT_STATE_NONE) {
             player->talkActor = Pilot_FindTalkCandidate(play, player);
         }
 
@@ -1917,7 +1919,8 @@ extern "C" s32 ShipCrewCamera_GetSecondNativeMode(PlayState* play) {
 
 // Environmental actors can locate P2 even when split-screen rendering is off.
 extern "C" Player* ShipCrewPilot_GetInteractionPlayer(PlayState* play) {
-    if (play == nullptr || GET_PLAYER(play) == nullptr || (!Pilot_OmnibusOn() && CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0) ||
+    if (play == nullptr || GET_PLAYER(play) == nullptr ||
+        (!Pilot_OmnibusOn() && CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0) ||
         CVarGetInteger(CVAR_ENHANCEMENT("IvanCoopModeEnabled"), 0) != 0)
         return nullptr;
     Actor* actor = FindPilotActor(play);
@@ -1925,7 +1928,8 @@ extern "C" Player* ShipCrewPilot_GetInteractionPlayer(PlayState* play) {
 }
 
 extern "C" Player* ShipCrewCamera_GetNativeSecondPlayer(PlayState* play) {
-    if (play == nullptr || (!Pilot_OmnibusOn() && CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0) || (!Pilot_OmnibusOn() && CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) == 0) ||
+    if (play == nullptr || (!Pilot_OmnibusOn() && CVarGetInteger(SHIPCREW_PILOT_CVAR, 0) == 0) ||
+        (!Pilot_OmnibusOn() && CVarGetInteger(SHIPCREW_SPLIT_CVAR, 0) == 0) ||
         CVarGetInteger(CVAR_ENHANCEMENT("IvanCoopModeEnabled"), 0) != 0 || play->activeCamera != CAM_ID_MAIN ||
         play->pauseCtx.state != 0 || play->pauseCtx.debugState != 0 || play->csCtx.state != CS_STATE_IDLE ||
         R_PAUSE_MENU_MODE != 0 || GET_PLAYER(play) == nullptr || play->roomCtx.curRoom.meshHeader == nullptr ||

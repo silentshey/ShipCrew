@@ -1631,8 +1631,7 @@ void SohInputEditorWindow::DrawLinkTab() {
         DrawSetDefaultsButton(portIndex);
         DrawDeviceToggles(portIndex);
 
-        CVarCheckbox("ShipCrew: OMNIBUS Native P2 Systems (DANGEROUS TEST)",
-                     CVAR_SETTING("ShipCrew.P2Omnibus"),
+        CVarCheckbox("ShipCrew: OMNIBUS Native P2 Systems (DANGEROUS TEST)", CVAR_SETTING("ShipCrew.P2Omnibus"),
                      CheckboxOptions()
                          .Color(THEME_COLOR)
                          .Tooltip("ONE SWITCH: P2 actor + independent split camera + original Link action system.\\n"
